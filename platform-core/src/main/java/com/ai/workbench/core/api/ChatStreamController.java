@@ -42,6 +42,10 @@ public class ChatStreamController {
                              @RequestParam(defaultValue = "demo") String memoryId,
                              @RequestParam String message) {
         SseEmitter emitter = new SseEmitter(0L);
+        // 断开/超时登记：TokenStream 无法取消，断开后本次模型调用会跑完，这里至少留痕可观测
+        emitter.onTimeout(() -> log.warn("SSE 超时断开: agent={}, memoryId={}", agent, memoryId));
+        emitter.onCompletion(() -> log.debug("SSE 连接结束: agent={}, memoryId={}", agent, memoryId));
+        emitter.onError(e -> log.warn("SSE 客户端断开: agent={}, memoryId={}", agent, memoryId));
         Assistant assistant = registry.get(agent);
 
         assistant.chat(memoryId, message)

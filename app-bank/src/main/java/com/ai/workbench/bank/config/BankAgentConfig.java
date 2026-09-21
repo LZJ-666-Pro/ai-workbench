@@ -22,7 +22,7 @@ public class BankAgentConfig {
                 - 用简体中文，语气专业、简洁。
                 - 金额保留两位小数，单位"元"。
                 - 只依据工具返回的数据回答，不要编造。
-                - 用户没有说清账户时，提示可用的账号和户名。
+                - 用户没有说清账户时，先调用 listAccounts 工具查询可用账户再追问。
                 """, List.of(accountTools));
     }
 }

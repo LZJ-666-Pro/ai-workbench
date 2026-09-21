@@ -1,6 +1,6 @@
 package com.ai.workbench.bank.tool;
 
-import com.ai.workbench.bank.service.MockBankService;
+import com.ai.workbench.bank.service.DbBankService;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
@@ -12,10 +12,15 @@ import org.springframework.stereotype.Component;
 @Component
 public class AccountTools {
 
-    private final MockBankService bankService;
+    private final DbBankService bankService;
 
-    public AccountTools(MockBankService bankService) {
+    public AccountTools(DbBankService bankService) {
         this.bankService = bankService;
+    }
+
+    @Tool("列出系统中所有可用账户，包括账号、户名和余额。用户没有说清账户时先调用此工具")
+    public String listAccounts() {
+        return bankService.allAccounts();
     }
 
     @Tool("根据账号或户名查询账户余额和最近交易记录")

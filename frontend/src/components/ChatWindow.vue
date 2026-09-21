@@ -94,10 +94,12 @@ function scrollBottom() {
         :key="i"
         class="msg"
         :class="m.role"
-      >{{ m.content }}<span
+      >{{ m.content }}<template
           v-if="streaming && m.role === 'assistant' && i === messages.length - 1"
-          class="caret"
-        >▍</span></div>
+        ><span v-if="!m.content" class="thinking">思考中…</span><span
+            v-else
+            class="caret"
+          >▍</span></template></div>
     </div>
     <div class="chat-input">
       <input
@@ -167,6 +169,18 @@ function scrollBottom() {
 .caret {
   animation: blink 0.9s steps(1) infinite;
   color: var(--accent);
+}
+
+/* GLM 是推理模型：思考阶段没有 delta，先给占位避免看起来像卡死 */
+.thinking {
+  color: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 
 @keyframes blink {
