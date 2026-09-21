@@ -1,0 +1,35 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: aiwb-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ai123456
+      MYSQL_DATABASE: ai_workbench
+      TZ: Asia/Shanghai
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    container_name: aiwb-redis
+    ports:
+      - "6379:6379"
+
+  # Phase 2 RAG 向量库，现在先备着
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aiwb-pgvector
+    environment:
+      POSTGRES_PASSWORD: ai123456
+      POSTGRES_DB: ai_workbench_vec
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
+volumes:
+  mysql-data:
+  pg-data:

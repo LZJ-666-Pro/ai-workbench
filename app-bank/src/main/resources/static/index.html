@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Workbench · 银行助手</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Microsoft YaHei", system-ui, sans-serif; background: #f5f6f8; }
+  .wrap { max-width: 720px; margin: 24px auto; padding: 0 16px; }
+  h1 { font-size: 20px; }
+  #chat { background: #fff; border-radius: 12px; padding: 16px; height: 60vh; overflow-y: auto;
+          box-shadow: 0 1px 4px rgba(0,0,0,.08); display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 10px; line-height: 1.6;
+         white-space: pre-wrap; word-break: break-word; }
+  .user { align-self: flex-end; background: #4f6ef2; color: #fff; }
+  .assistant { align-self: flex-start; background: #f0f2f5; color: #222; }
+  .row { display: flex; gap: 8px; margin-top: 12px; }
+  #input { flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
+  button { padding: 10px 18px; border: 0; border-radius: 8px; background: #4f6ef2; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+  .hint { color: #888; font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🏦 银行助手 Demo（platform-core SSE 流式）</h1>
+  <div id="chat"></div>
+  <div class="row">
+    <input id="input" placeholder="试试：查一下张三的余额" autocomplete="off">
+    <button id="send">发送</button>
+  </div>
+  <div class="hint">Agent 列表：GET /api/chat/agents · 流式接口：GET /api/chat/bank/stream</div>
+</div>
+<script>
+const chatEl = document.getElementById('chat');
+const inputEl = document.getElementById('input');
+const sendBtn = document.getElementById('send');
+
+let memoryId = localStorage.getItem('aiwb-memory-id');
+if (!memoryId) {
+  memoryId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+  localStorage.setItem('aiwb-memory-id', memoryId);
+}
+
+function addMsg(cls, text) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + cls;
+  div.textContent = text;
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return div;
+}
+
+async function send() {
+  const message = inputEl.value.trim();
+  if (!message || sendBtn.disabled) return;
+  addMsg('user', message);
+  inputEl.value = '';
+  sendBtn.disabled = true;
+  const bubble = addMsg('assistant', '');
+  try {
+    const url = '/api/chat/bank/stream?memoryId=' + encodeURIComponent(memoryId)
+              + '&message=' + encodeURIComponent(message);
+    const resp = await fetch(url);
+    if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buf = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      const frames = buf.split('\n\n');
+      buf = frames.pop();
+      for (const frame of frames) {
+        const dataLine = frame.split('\n').find(l => l.startsWith('data:'));
+        if (!dataLine) continue;
+        const evt = JSON.parse(dataLine.slice(5).trim());
+        if (evt.type === 'delta') {
+          bubble.textContent += evt.content;
+          chatEl.scrollTop = chatEl.scrollHeight;
+        } else if (evt.type === 'error') {
+          bubble.textContent += '\n[错误] ' + evt.content;
+        }
+      }
+    }
+  } catch (e) {
+    bubble.textContent += '\n[连接失败] ' + e.message + '（请确认应用已启动且已配置 AI_LLM_API_KEY）';
+  } finally {
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+}
+
+sendBtn.addEventListener('click', send);
+inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+inputEl.focus();
+</script>
+</body>
+</html>
