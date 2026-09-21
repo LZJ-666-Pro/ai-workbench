@@ -1,0 +1,26 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: app-knowledge
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/ai_workbench?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:ai123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath*:schema.sql
+
+ai:
+  llm:
+    base-url: ${AI_LLM_BASE_URL:https://api.deepseek.com/v1}
+    api-key: ${AI_LLM_API_KEY:}
+    model-name: ${AI_LLM_MODEL:deepseek-chat}
+  # Phase 2 打开下面两项，启用向量模型与 pgvector
+  embedding:
+    enabled: false
+  rag:
+    enabled: false
