@@ -2,15 +2,31 @@
  * SSE 流式对话客户端：fetch + ReadableStream 手动解析 text/event-stream 帧。
  *
  * 后端事件格式（platform-core ChatStreamController）：
- *   data:{"type":"delta","content":"token"}   增量内容
- *   data:{"type":"done","totalTokens":123}    结束
- *   data:{"type":"error","content":"..."}     出错
+ *   data:{"type":"delta","content":"token"}                  增量内容
+ *   data:{"type":"done","totalTokens":123}                   结束
+ *   data:{"type":"error","content":"..."}                    出错
+ *   data:{"type":"confirm_request","confirmId":"...",...}    转账确认卡片（app-bank）
  */
 
 export interface ChatEvent {
-  type: 'delta' | 'done' | 'error'
+  type: 'delta' | 'done' | 'error' | 'confirm_request'
   content?: string
   totalTokens?: number
+  confirmId?: string
+  fromAccount?: string
+  toAccount?: string
+  toOwner?: string
+  amount?: number
+  reason?: string
+}
+
+export interface ConfirmRequestData {
+  confirmId: string
+  fromAccount: string
+  toAccount: string
+  toOwner: string
+  amount: number
+  reason: string
 }
 
 export interface StreamChatOptions {
@@ -24,6 +40,8 @@ export interface StreamChatOptions {
   onDelta: (text: string) => void
   onDone?: (totalTokens: number) => void
   onError?: (message: string) => void
+  /** 收到确认卡片时回调（仅 app-bank 会产生） */
+  onConfirmRequest?: (card: ConfirmRequestData) => void
 }
 
 const memoryKey = (agent: string) => `aiwb-memory-${agent}`
@@ -78,7 +96,34 @@ export async function streamChat(opts: StreamChatOptions): Promise<void> {
         opts.onDone?.(evt.totalTokens ?? -1)
       } else if (evt.type === 'error') {
         opts.onError?.(evt.content ?? '模型调用失败')
+      } else if (evt.type === 'confirm_request' && evt.confirmId) {
+        opts.onConfirmRequest?.({
+          confirmId: evt.confirmId,
+          fromAccount: evt.fromAccount ?? '',
+          toAccount: evt.toAccount ?? '',
+          toOwner: evt.toOwner ?? '',
+          amount: evt.amount ?? 0,
+          reason: evt.reason ?? '',
+        })
       }
     }
   }
+}
+
+/** 确认/取消转账卡片。幂等性由后端状态机保证：重复提交只会得到"已处理过"提示 */
+export async function respondTransferConfirm(
+  basePath: string,
+  memoryId: string,
+  confirmId: string,
+  action: 'confirm' | 'cancel',
+): Promise<{ ok: boolean; message: string }> {
+  const resp = await fetch(`${basePath}/api/transfer/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memoryId, confirmId, action }),
+  })
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}`)
+  }
+  return await resp.json() as { ok: boolean; message: string }
 }

@@ -37,15 +37,21 @@ INSERT IGNORE INTO bank_transaction (id, account_no, amount, description) VALUES
     (9,  '62220002',  3206.50, '2026-08-31 期初余额 +3206.50'),
     (10, '62220003', 49118.20, '2026-08-31 期初余额 +49118.20');
 
--- 转账订单：Step 2 直接以 EXECUTED 落库；Step 3 在此表上增加 PENDING 状态与 confirm_id 走人工确认
+-- 转账订单（Step 3 两段式）：模型只能创建 PENDING 确认单；只有确认接口的
+-- 状态机 CAS（WHERE status='PENDING'）才能推进到 EXECUTED，重复提交幂等拦截
 CREATE TABLE IF NOT EXISTS bank_transfer_order (
     id           BIGINT        AUTO_INCREMENT PRIMARY KEY,
+    confirm_id   CHAR(36)      NOT NULL,
+    memory_id    VARCHAR(190)  NOT NULL,
     from_account VARCHAR(32)   NOT NULL,
     to_account   VARCHAR(32)   NOT NULL,
     amount       DECIMAL(12,2) NOT NULL,
     reason       VARCHAR(255)  NULL,
-    status       VARCHAR(16)   NOT NULL,           -- EXECUTED / PENDING / CANCELLED / REJECTED
+    status       VARCHAR(16)   NOT NULL,           -- PENDING / EXECUTED / CANCELLED / REJECTED
+    notified     TINYINT(1)    NOT NULL DEFAULT 0, -- 确认卡片是否已推送给前端
     created_at   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_confirm_id (confirm_id),
+    INDEX idx_transfer_session (memory_id, status, notified),
     INDEX idx_transfer_from (from_account, status, created_at)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getMemoryId, newMemoryId, streamChat } from '../api/chat'
+import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat } from '../api/chat'
+import type { ConfirmRequestData } from '../api/chat'
 
 const props = withDefaults(defineProps<{
   /** 后端代理前缀：/bank | /knowledge | /interview */
@@ -14,9 +15,15 @@ const props = withDefaults(defineProps<{
   placeholder: '输入消息，回车发送…',
 })
 
+interface CardMsg extends ConfirmRequestData {
+  status: 'pending' | 'processing' | 'confirmed' | 'cancelled'
+}
+
 interface Msg {
   role: 'user' | 'assistant'
+  kind: 'text' | 'card'
   content: string
+  card?: CardMsg
 }
 
 const messages = ref<Msg[]>([])
@@ -28,7 +35,7 @@ let controller: AbortController | null = null
 
 onMounted(() => {
   memoryId = getMemoryId(props.agent)
-  messages.value.push({ role: 'assistant', content: props.welcome })
+  messages.value.push({ role: 'assistant', kind: 'text', content: props.welcome })
 })
 
 onBeforeUnmount(() => controller?.abort())
@@ -37,10 +44,10 @@ async function send() {
   const message = input.value.trim()
   if (!message || streaming.value) return
   input.value = ''
-  messages.value.push({ role: 'user', content: message })
+  messages.value.push({ role: 'user', kind: 'text', content: message })
 
   // 从响应式数组里取代理对象，流式追加才会触发视图更新
-  messages.value.push({ role: 'assistant', content: '' })
+  messages.value.push({ role: 'assistant', kind: 'text', content: '' })
   const reply = messages.value[messages.value.length - 1]
 
   streaming.value = true
@@ -60,6 +67,10 @@ async function send() {
       onError: (msg) => {
         reply.content += `\n[错误] ${msg}`
       },
+      onConfirmRequest: (card) => {
+        messages.value.push({ role: 'assistant', kind: 'card', content: '', card })
+        scrollBottom()
+      },
     })
   } catch (e) {
     reply.content += `\n[连接失败] ${e instanceof Error ? e.message : String(e)}`
@@ -70,11 +81,30 @@ async function send() {
   }
 }
 
+/** 确认卡片操作：调后端确认接口，结果以普通消息回显 */
+async function respondCard(card: CardMsg, action: 'confirm' | 'cancel') {
+  if (card.status !== 'pending') return
+  card.status = 'processing'
+  try {
+    const res = await respondTransferConfirm(props.basePath, memoryId, card.confirmId, action)
+    card.status = action === 'confirm' ? 'confirmed' : 'cancelled'
+    messages.value.push({ role: 'assistant', kind: 'text', content: res.message })
+  } catch (e) {
+    card.status = 'pending'
+    messages.value.push({
+      role: 'assistant',
+      kind: 'text',
+      content: `[确认失败] ${e instanceof Error ? e.message : String(e)}`,
+    })
+  }
+  scrollBottom()
+}
+
 /** 新建会话：换 memoryId 并清空界面 */
 function reset() {
   controller?.abort()
   memoryId = newMemoryId(props.agent)
-  messages.value = [{ role: 'assistant', content: props.welcome }]
+  messages.value = [{ role: 'assistant', kind: 'text', content: props.welcome }]
 }
 
 function scrollBottom() {
@@ -93,13 +123,31 @@ function scrollBottom() {
         v-for="(m, i) in messages"
         :key="i"
         class="msg"
-        :class="m.role"
-      >{{ m.content }}<template
-          v-if="streaming && m.role === 'assistant' && i === messages.length - 1"
-        ><span v-if="!m.content" class="thinking">思考中…</span><span
-            v-else
-            class="caret"
-          >▍</span></template></div>
+        :class="[m.role, { card: m.kind === 'card' }]"
+      >
+        <template v-if="m.kind === 'card' && m.card">
+          <div class="card-title">💸 待确认转账</div>
+          <div class="card-row">收款：{{ m.card.toOwner }}（{{ m.card.toAccount }}）</div>
+          <div class="card-row">金额：<b>¥{{ m.card.amount.toFixed(2) }}</b></div>
+          <div v-if="m.card.reason" class="card-row">附言：{{ m.card.reason }}</div>
+          <div class="card-row">付款：{{ m.card.fromAccount }}</div>
+          <div v-if="m.card.status === 'pending'" class="card-actions">
+            <button class="primary" @click="respondCard(m.card, 'confirm')">确认转账</button>
+            <button class="ghost" @click="respondCard(m.card, 'cancel')">取消</button>
+          </div>
+          <div v-else-if="m.card.status === 'processing'" class="card-status">处理中…</div>
+          <div v-else-if="m.card.status === 'confirmed'" class="card-status ok">✅ 已确认</div>
+          <div v-else class="card-status">🚫 已取消</div>
+        </template>
+        <template v-else>
+          {{ m.content }}<template
+            v-if="streaming && m.role === 'assistant' && i === messages.length - 1"
+          ><span v-if="!m.content" class="thinking">思考中…</span><span
+              v-else
+              class="caret"
+            >▍</span></template>
+        </template>
+      </div>
     </div>
     <div class="chat-input">
       <input
@@ -164,6 +212,42 @@ function scrollBottom() {
   align-self: flex-start;
   background: var(--bg);
   border: 1px solid var(--border);
+}
+
+/* 确认卡片：比普通消息更醒目 */
+.msg.card {
+  min-width: 260px;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+}
+
+.card-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.card-row {
+  font-size: 14px;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.card-actions .primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.card-status {
+  margin-top: 10px;
+  font-size: 14px;
+}
+
+.card-status.ok {
+  color: var(--accent);
 }
 
 .caret {

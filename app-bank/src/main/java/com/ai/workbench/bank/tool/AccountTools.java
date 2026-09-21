@@ -7,7 +7,7 @@ import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
 /**
- * 查询类工具：只读，但在边界层同样留审计。
+ * 查询类工具：只读，但在边界层同样留审计（memoryId 来自 ToolCallContext）。
  */
 @Component
 public class AccountTools {
@@ -22,14 +22,15 @@ public class AccountTools {
 
     @Tool("列出系统中所有可用账户，包括账号、户名和余额。用户没有说清账户时先调用此工具")
     public String listAccounts() {
-        audit.record(null, "listAccounts", "-", "SUCCESS");
+        audit.record(ToolCallContext.currentMemoryId(), "listAccounts", "-", "SUCCESS");
         return bankService.allAccounts();
     }
 
     @Tool("根据账号或户名查询账户余额和最近交易记录")
     public String queryAccount(
             @P(value = "账号或户名，例如 62220001 或 张三") String accountOrOwner) {
-        audit.record(null, "queryAccount", "target=%s".formatted(accountOrOwner), "SUCCESS");
+        audit.record(ToolCallContext.currentMemoryId(), "queryAccount",
+                "target=%s".formatted(accountOrOwner), "SUCCESS");
         return bankService.find(accountOrOwner)
                 .map(account -> "账户 %s（%s）余额：%.2f 元。最近交易：\n%s".formatted(
                         account.accountNo(),

@@ -8,6 +8,7 @@ import com.ai.workbench.core.agent.Assistant;
 import dev.langchain4j.model.output.TokenUsage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,9 +22,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  *   GET /api/chat/{agent}/stream?memoryId=会话ID&message=用户输入
  *
  * 事件格式（JSON）：
- *   {"type":"delta",  "content":"token"}   增量内容
- *   {"type":"done",   "totalTokens":123}   结束，附 token 用量
+ *   {"type":"delta",  "content":"token"}    增量内容
+ *   {"type":"done",   "totalTokens":123}    结束，附 token 用量
  *   {"type":"error",  "content":"..."}      出错
+ *   {"type":"confirm_request", ...}         业务模块追加的领域事件（AgentStreamListener）
  */
 @RestController
 @RequestMapping("/api/chat")
@@ -32,9 +34,11 @@ public class ChatStreamController {
     private static final Logger log = LoggerFactory.getLogger(ChatStreamController.class);
 
     private final AgentRegistry registry;
+    private final ObjectProvider<AgentStreamListener> streamListeners;
 
-    public ChatStreamController(AgentRegistry registry) {
+    public ChatStreamController(AgentRegistry registry, ObjectProvider<AgentStreamListener> streamListeners) {
         this.registry = registry;
+        this.streamListeners = streamListeners;
     }
 
     @GetMapping(value = "/{agent}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -49,18 +53,26 @@ public class ChatStreamController {
         Assistant assistant = registry.get(agent);
 
         assistant.chat(memoryId, message)
-                .onPartialResponse(token -> send(emitter,
+                .onPartialResponse(token -> SseSender.send(emitter,
                         Map.of("type", "delta", "content", token == null ? "" : token)))
                 .onCompleteResponse(response -> {
+                    // 先让业务模块追加领域事件（如确认卡片），再发 done 收尾
+                    streamListeners.stream().forEach(listener -> {
+                        try {
+                            listener.onStreamComplete(agent, memoryId, emitter);
+                        } catch (Exception e) {
+                            log.warn("AgentStreamListener 执行失败: {}", e.getMessage(), e);
+                        }
+                    });
                     TokenUsage usage = response.metadata() != null
                             ? response.metadata().tokenUsage() : null;
-                    send(emitter, Map.of("type", "done",
+                    SseSender.send(emitter, Map.of("type", "done",
                             "totalTokens", usage != null ? usage.totalTokenCount() : -1));
                     emitter.complete();
                 })
                 .onError(error -> {
                     log.error("流式对话出错: {}", error.getMessage(), error);
-                    send(emitter, Map.of("type", "error",
+                    SseSender.send(emitter, Map.of("type", "error",
                             "content", error.getMessage() == null ? "模型调用失败" : error.getMessage()));
                     emitter.complete();
                 })
@@ -72,13 +84,5 @@ public class ChatStreamController {
     @GetMapping("/agents")
     public Set<String> agents() {
         return registry.names();
-    }
-
-    private void send(SseEmitter emitter, Object payload) {
-        try {
-            emitter.send(payload);
-        } catch (Exception e) {
-            // 客户端断开等场景，静默结束本次推送
-        }
     }
 }

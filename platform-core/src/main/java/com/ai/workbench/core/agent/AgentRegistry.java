@@ -34,7 +34,9 @@ public class AgentRegistry {
                             .maxMessages(llmProperties.getMaxMessages())
                             .chatMemoryStore(chatMemoryStore)
                             .build());
-            if (!spec.tools().isEmpty()) {
+            if (spec.toolProvider() != null) {
+                builder.toolProvider(spec.toolProvider());
+            } else if (!spec.tools().isEmpty()) {
                 builder.tools(spec.tools());
             }
             assistants.put(spec.name(), builder.build());
