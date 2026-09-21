@@ -3,12 +3,12 @@ services:
     image: mysql:8.4
     container_name: aiwb-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: ai123456
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_DATABASE: ai_workbench
       TZ: Asia/Shanghai
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     ports:
-      - "3306:3306"
+      - "127.0.0.1:13306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
 
