@@ -31,6 +31,11 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- 应用进程工作目录固定为仓库根：spring-dotenv 从 cwd 读取 .env，
+                         否则 spring-boot:run 默认用模块目录，导致 .env 加载不到 -->
+                    <workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>

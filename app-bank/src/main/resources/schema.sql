@@ -36,3 +36,30 @@ INSERT IGNORE INTO bank_transaction (id, account_no, amount, description) VALUES
     (8,  '62220001',  4550.50, '2026-08-31 期初余额 +4550.50'),
     (9,  '62220002',  3206.50, '2026-08-31 期初余额 +3206.50'),
     (10, '62220003', 49118.20, '2026-08-31 期初余额 +49118.20');
+
+-- 转账订单：Step 2 直接以 EXECUTED 落库；Step 3 在此表上增加 PENDING 状态与 confirm_id 走人工确认
+CREATE TABLE IF NOT EXISTS bank_transfer_order (
+    id           BIGINT        AUTO_INCREMENT PRIMARY KEY,
+    from_account VARCHAR(32)   NOT NULL,
+    to_account   VARCHAR(32)   NOT NULL,
+    amount       DECIMAL(12,2) NOT NULL,
+    reason       VARCHAR(255)  NULL,
+    status       VARCHAR(16)   NOT NULL,           -- EXECUTED / PENDING / CANCELLED / REJECTED
+    created_at   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_transfer_from (from_account, status, created_at)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+-- AI 工具调用审计：谁（memoryId）、何时、调了什么、参数、结果（成功/拒绝/异常全量留痕）
+CREATE TABLE IF NOT EXISTS bank_audit_log (
+    id         BIGINT       AUTO_INCREMENT PRIMARY KEY,
+    memory_id  VARCHAR(190) NOT NULL,
+    tool_name  VARCHAR(64)  NOT NULL,
+    detail     VARCHAR(512) NOT NULL,
+    result     VARCHAR(16)  NOT NULL,             -- SUCCESS / DENY / FAIL / ALLOW
+    created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_audit_time (created_at)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+-- 风控黑名单演示账户（见 TransferRiskRules.BLACKLIST）
+INSERT IGNORE INTO bank_account (account_no, owner, balance) VALUES
+    ('62220004', '赵六', 100.00);

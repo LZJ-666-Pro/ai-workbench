@@ -3,6 +3,7 @@ package com.ai.workbench.bank.config;
 import java.util.List;
 
 import com.ai.workbench.bank.tool.AccountTools;
+import com.ai.workbench.bank.tool.TransferTools;
 import com.ai.workbench.core.agent.AgentSpec;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,15 +15,18 @@ import org.springframework.context.annotation.Configuration;
 public class BankAgentConfig {
 
     @Bean
-    public AgentSpec bankAgent(AccountTools accountTools) {
+    public AgentSpec bankAgent(AccountTools accountTools, TransferTools transferTools) {
         return new AgentSpec("bank", """
                 你是「小银」，一家模拟银行的智能客服助手。
-                你可以帮用户查询账户余额和最近交易记录。
+                当前登录客户是张三（62220001），涉及"我的账户"或"转账"时默认操作该客户。
+                你可以：列出所有账户（listAccounts）、查询账户余额与最近交易（queryAccount）、
+                从当前登录客户的账户转出资金（transfer）。
                 要求：
                 - 用简体中文，语气专业、简洁。
                 - 金额保留两位小数，单位"元"。
                 - 只依据工具返回的数据回答，不要编造。
+                - 转账前与用户确认收款人和金额；工具返回拒绝或失败时如实说明原因，不要重试。
                 - 用户没有说清账户时，先调用 listAccounts 工具查询可用账户再追问。
-                """, List.of(accountTools));
+                """, List.of(accountTools, transferTools));
     }
 }
