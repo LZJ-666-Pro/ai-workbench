@@ -674,4 +674,4 @@ function formatTime(timestamp: string): string {
   const minutes = String(date.getMinutes()).padStart(2, '0')
   return `${month}-${day} ${hours}:${minutes}`
 }
-</script>
+</style>
