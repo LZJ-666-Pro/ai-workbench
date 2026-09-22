@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat } from '../api/chat'
+import { getMemoryId, loadHistoryMessages, newMemoryId, respondTransferConfirm, streamChat } from '../api/chat'
 import type { ConfirmRequestData } from '../api/chat'
 
 const props = withDefaults(defineProps<{
@@ -33,9 +33,13 @@ const listEl = ref<HTMLElement | null>(null)
 let memoryId = ''
 let controller: AbortController | null = null
 
-onMounted(() => {
+onMounted(async () => {
   memoryId = getMemoryId(props.agent)
+  // 欢迎语置顶，随后按时间序恢复该会话的历史消息（刷新/重进页面不丢聊天记录）
   messages.value.push({ role: 'assistant', kind: 'text', content: props.welcome })
+  const history = await loadHistoryMessages(props.basePath, props.agent, memoryId)
+  history.forEach(h => messages.value.push({ role: h.role, kind: 'text', content: h.content }))
+  scrollBottom()
 })
 
 onBeforeUnmount(() => controller?.abort())
