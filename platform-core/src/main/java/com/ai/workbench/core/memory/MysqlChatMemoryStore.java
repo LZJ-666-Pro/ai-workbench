@@ -38,10 +38,8 @@ public class MysqlChatMemoryStore implements ChatMemoryStore {
     @Override
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
         String json = ChatMessageSerializer.messagesToJson(messages);
-        jdbc.update("""
-                INSERT INTO chat_memory (memory_id, content) VALUES (?, ?)
-                ON DUPLICATE KEY UPDATE content = VALUES(content)
-                """, memoryId, json);
+        String sql = "INSERT INTO chat_memory (memory_id, content) VALUES (?, ?) ON DUPLICATE KEY UPDATE content = VALUES(content)";
+        jdbc.update(sql, memoryId, json);
     }
 
     @Override

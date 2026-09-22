@@ -59,6 +59,9 @@
                     <configuration>
                         <!-- Spring 6.1 起不再从字节码局部变量表推断参数名，@RequestParam 等依赖 -parameters -->
                         <parameters>true</parameters>
+                        <source>21</source>
+                        <target>21</target>
+                        <release>21</release>
                     </configuration>
                 </plugin>
                 <plugin>
