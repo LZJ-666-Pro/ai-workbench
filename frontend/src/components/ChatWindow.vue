@@ -37,26 +37,16 @@ interface SidebarSession {
   active: boolean
 }
 
-const messages = ref<Msg[]>([])
 const input = ref('')
 const streaming = ref(false)
 const listEl = ref<HTMLElement | null>(null)
 const sidebarOpen = ref(true)
+const sidebarCollapsed = ref(false)
 const sessions = ref<SidebarSession[]>([])
 const loadingSessions = ref(false)
+const messages = ref<Msg[]>([])
 let memoryId = ''
 let controller: AbortController | null = null
-
-/** 格式化时间（只显示 MM-DD HH:mm） */
-function formatTime(timestamp: string): string {
-  if (!timestamp) return ''
-  const date = new Date(timestamp)
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hours = String(date.getHours()).padStart(2, '0')
-  const minutes = String(date.getMinutes()).padStart(2, '0')
-  return `${month}-${day} ${hours}:${minutes}`
-}
 
 onMounted(async () => {
   memoryId = getMemoryId(props.agent)
@@ -106,18 +96,19 @@ async function switchSession(sessionId: string) {
   scrollBottom()
 }
 
-async function newSession() {
+function newSession() {
   memoryId = newMemoryId(props.agent)
   messages.value = [{ role: 'assistant', kind: 'text', content: props.welcome }]
   // 清空会话列表，显示"暂无历史会话"
   sessions.value = []
-  // 重新加载会话列表
-  await loadSessions()
+  // 收起侧边栏（如果是新建会话）
+  sidebarOpen.value = false
   scrollBottom()
 }
 
 function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
+  sidebarCollapsed.value = !sidebarOpen.value
 }
 
 async function send() {
@@ -181,25 +172,24 @@ async function respondCard(card: CardMsg, action: 'confirm' | 'cancel') {
 function scrollBottom() {
   nextTick(() => listEl.value?.scrollTo({ top: listEl.value.scrollHeight }))
 }
+
+/** 格式化时间（只显示 MM-DD HH:mm） */
+function formatTime(timestamp: string): string {
+  if (!timestamp) return ''
+  const date = new Date(timestamp)
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  return `${month}-${day} ${hours}:${minutes}`
+}
 </script>
 
 <template>
-  <section class="chat">
-    <div class="chat-head">
-      <div class="chat-title">
-        <button class="ghost" :disabled="loadingSessions" @click="toggleSidebar">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <span>会话列表</span>
-        </button>
-        <h2>{{ title }}</h2>
-      </div>
-      <button class="ghost" :disabled="streaming" @click="newSession">新建会话</button>
-    </div>
-
+  <div class="chat-container">
     <!-- 侧边栏会话列表 -->
     <aside v-if="sidebarOpen" class="sidebar" ref="sidebarEl">
+      <!-- 侧边栏头部 -->
       <div class="sidebar-header">
         <div class="sidebar-title">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -207,8 +197,14 @@ function scrollBottom() {
           </svg>
           <span>会话历史（{{ sessions.length }}）</span>
         </div>
-        <button class="ghost" @click="newSession" title="新建会话">+ 新会话</button>
+        <button class="new-chat-btn" @click="newSession" title="新建会话">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M12 5v14M5 12h14" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
+
+      <!-- 会话列表 -->
       <div v-if="loadingSessions" class="loading">加载中…</div>
       <div v-else-if="sessions.length === 0" class="empty">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -232,94 +228,91 @@ function scrollBottom() {
       </div>
     </aside>
 
-    <div class="chat-body">
-      <div
-        v-for="(m, i) in messages"
-        :key="i"
-        class="msg"
-        :class="[m.role, { card: m.kind === 'card' }]"
-      >
-        <template v-if="m.kind === 'card' && m.card">
-          <div class="card-title">💸 待确认转账</div>
-          <div class="card-row">收款：{{ m.card.toOwner }}（{{ m.card.toAccount }}）</div>
-          <div class="card-row">金额：<b>¥{{ m.card.amount.toFixed(2) }}</b></div>
-          <div v-if="m.card.reason" class="card-row">附言：{{ m.card.reason }}</div>
-          <div class="card-row">付款：{{ m.card.fromAccount }}</div>
-          <div v-if="m.card.status === 'pending'" class="card-actions">
-            <button class="primary" @click="respondCard(m.card, 'confirm')">确认转账</button>
-            <button class="ghost" @click="respondCard(m.card, 'cancel')">取消</button>
-          </div>
-          <div v-else-if="m.card.status === 'processing'" class="card-status">处理中…</div>
-          <div v-else-if="m.card.status === 'confirmed'" class="card-status ok">✅ 已确认</div>
-          <div v-else class="card-status">🚫 已取消</div>
-        </template>
-        <template v-else>
-          {{ m.content }}<template
-            v-if="streaming && m.role === 'assistant' && i === messages.length - 1"
-          ><span v-if="!m.content" class="thinking">思考中…</span><span
-              v-else
-              class="caret"
-            >▍</span></template>
-        </template>
+    <!-- 主聊天区域 -->
+    <main class="chat-main" :class="{ expanded: sidebarCollapsed && sidebarOpen }">
+      <!-- 顶部工具栏 -->
+      <div class="chat-toolbar">
+        <button class="icon-btn" :disabled="loadingSessions" @click="toggleSidebar" title="切换侧边栏">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <h2 class="chat-title">{{ title }}</h2>
       </div>
-    </div>
 
-    <div class="chat-input">
-      <input
-        v-model="input"
-        :placeholder="placeholder"
-        :disabled="streaming"
-        @keydown.enter="send"
-      >
-      <button :disabled="streaming" @click="send">
-        {{ streaming ? '回复中…' : '发送' }}
-      </button>
-    </div>
-  </section>
+      <!-- 聊天消息列表 -->
+      <div class="chat-body" ref="listEl">
+        <div
+          v-for="(m, i) in messages"
+          :key="i"
+          class="msg"
+          :class="[m.role, { card: m.kind === 'card' }]"
+        >
+          <template v-if="m.kind === 'card' && m.card">
+            <div class="card-title">💸 待确认转账</div>
+            <div class="card-row">收款：{{ m.card.toOwner }}（{{ m.card.toAccount }}）</div>
+            <div class="card-row">金额：<b>¥{{ m.card.amount.toFixed(2) }}</b></div>
+            <div v-if="m.card.reason" class="card-row">附言：{{ m.card.reason }}</div>
+            <div class="card-row">付款：{{ m.card.fromAccount }}</div>
+            <div v-if="m.card.status === 'pending'" class="card-actions">
+              <button class="primary" @click="respondCard(m.card, 'confirm')">确认转账</button>
+              <button class="ghost" @click="respondCard(m.card, 'cancel')">取消</button>
+            </div>
+            <div v-else-if="m.card.status === 'processing'" class="card-status">处理中…</div>
+            <div v-else-if="m.card.status === 'confirmed'" class="card-status ok">✅ 已确认</div>
+            <div v-else class="card-status">🚫 已取消</div>
+          </template>
+          <template v-else>
+            {{ m.content }}<template
+              v-if="streaming && m.role === 'assistant' && i === messages.length - 1"
+            ><span v-if="!m.content" class="thinking">思考中…</span><span
+                v-else
+                class="caret"
+              >▍</span></template>
+          </template>
+        </div>
+      </div>
+
+      <!-- 输入区域 -->
+      <div class="chat-input">
+        <div class="input-wrapper">
+          <input
+            v-model="input"
+            :placeholder="placeholder"
+            :disabled="streaming"
+            @keydown.enter="send"
+          >
+          <button :disabled="streaming" @click="send">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </main>
+  </div>
 </template>
 
 <style scoped>
-.chat {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
+.chat-container {
   display: flex;
-  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
 }
 
-.chat-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--card);
-}
-
-.chat-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.chat-title h2 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-}
-
+/* 侧边栏 */
 .sidebar {
   width: 280px;
-  border-right: 1px solid var(--border);
   background: var(--bg);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  transition: width 0.3s ease;
 }
 
 .sidebar-header {
-  padding: 14px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -337,6 +330,31 @@ function scrollBottom() {
 
 .sidebar-title svg {
   color: var(--accent);
+}
+
+.new-chat-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.new-chat-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.new-chat-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .loading {
@@ -380,7 +398,6 @@ function scrollBottom() {
 
 .session-item.active {
   background: var(--accent);
-  border-left: 3px solid var(--accent);
 }
 
 .session-info {
@@ -395,6 +412,9 @@ function scrollBottom() {
   font-size: 13px;
   color: var(--text);
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-time {
@@ -403,13 +423,69 @@ function scrollBottom() {
   white-space: nowrap;
 }
 
+/* 主聊天区域 */
+.chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  transition: flex 0.3s ease;
+}
+
+.chat-main.expanded {
+  flex: 1;
+}
+
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 聊天消息列表 */
 .chat-body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
   min-height: 0;
 }
 
@@ -430,7 +506,7 @@ function scrollBottom() {
 
 .msg.assistant {
   align-self: flex-start;
-  background: var(--bg);
+  background: var(--card);
   border: 1px solid var(--border);
 }
 
@@ -438,32 +514,63 @@ function scrollBottom() {
 .msg.card {
   min-width: 260px;
   border: 1px solid var(--accent);
-  background: var(--bg);
+  background: var(--card);
 }
 
 .card-title {
   font-weight: 600;
   margin-bottom: 6px;
+  color: var(--text);
 }
 
 .card-row {
   font-size: 14px;
+  color: var(--text);
+  margin: 4px 0;
 }
 
 .card-actions {
   display: flex;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .card-actions .primary {
   background: var(--accent);
   color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.card-actions .primary:hover {
+  opacity: 0.9;
+}
+
+.card-actions .ghost {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.card-actions .ghost:hover {
+  border-color: var(--text-muted);
 }
 
 .card-status {
-  margin-top: 10px;
-  font-size: 14px;
+  margin-top: 12px;
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--bg);
 }
 
 .card-status.ok {
@@ -493,37 +600,78 @@ function scrollBottom() {
   }
 }
 
+/* 输入区域 */
 .chat-input {
-  display: flex;
-  gap: 10px;
-  padding: 14px 20px;
+  padding: 20px;
   border-top: 1px solid var(--border);
   background: var(--card);
 }
 
-.chat-input input {
-  flex: 1;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 14px;
+.input-wrapper {
+  display: flex;
+  gap: 12px;
+  max-width: 800px;
+  margin: 0 auto;
   background: var(--bg);
-  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
   transition: border-color 0.2s;
 }
 
-.chat-input input:focus {
-  outline: none;
+.input-wrapper:focus-within {
   border-color: var(--accent);
 }
 
-.chat-input input:disabled {
+.input-wrapper input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--text);
+  padding: 8px 12px;
+}
+
+.input-wrapper input:focus {
+  outline: none;
+}
+
+.input-wrapper input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-.chat-input input {
-  flex: 1;
+.input-wrapper button {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.2s;
 }
 
-</style>
+.input-wrapper button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.input-wrapper button:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+/** 格式化时间（只显示 MM-DD HH:mm） */
+function formatTime(timestamp: string): string {
+  if (!timestamp) return ''
+  const date = new Date(timestamp)
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  return `${month}-${day} ${hours}:${minutes}`
+}
+</script>
