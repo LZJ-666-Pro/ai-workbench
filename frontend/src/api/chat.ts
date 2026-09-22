@@ -40,11 +40,32 @@ export interface StreamChatOptions {
   onDelta: (text: string) => void
   onDone?: (totalTokens: number) => void
   onError?: (message: string) => void
-  /** 收到确认卡片时回调（仅 app-bank 会产生） */
   onConfirmRequest?: (card: ConfirmRequestData) => void
+  /** 历史消息（对话开始前传入，会被追加到当前消息列表） */
+  initialHistory?: Msg[]
 }
 
 const memoryKey = (agent: string) => `aiwb-memory-${agent}`
+
+/** 从数据库加载历史消息 */
+export async function loadHistoryMessages(
+  basePath: string,
+  agent: string,
+  memoryId: string,
+): Promise<Msg[]> {
+  try {
+    const resp = await fetch(`${basePath}/api/memory/${agent}/${encodeURIComponent(memoryId)}`)
+    if (!resp.ok) {
+      console.warn(`加载历史消息失败: HTTP ${resp.status}`)
+      return []
+    }
+    const msgs: Msg[] = await resp.json()
+    return msgs
+  } catch (e) {
+    console.error('加载历史消息异常:', e)
+    return []
+  }
+}
 
 /** 取当前会话 ID；没有则新建（会话按 Agent 隔离，刷新页面不丢） */
 export function getMemoryId(agent: string): string {
@@ -70,6 +91,14 @@ export async function streamChat(opts: StreamChatOptions): Promise<void> {
   const resp = await fetch(url, { signal: opts.signal })
   if (!resp.ok || !resp.body) {
     throw new Error(`HTTP ${resp.status}（请确认对应后端已启动）`)
+  }
+
+  // 先追加历史消息
+  if (opts.initialHistory && opts.initialHistory.length > 0) {
+    opts.initialHistory.forEach(msg => {
+      messages.value.push(msg)
+    })
+    scrollBottom()
   }
 
   const reader = resp.body.getReader()
