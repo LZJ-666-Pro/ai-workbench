@@ -72,8 +72,15 @@ public class ChatStreamController {
                 })
                 .onError(error -> {
                     log.error("流式对话出错: {}", error.getMessage(), error);
+                    // 对 GLM 错误码 1305（访问量过大）做友好转换
+                    String friendlyMessage = error.getMessage() != null
+                            ? error.getMessage()
+                            : "模型调用失败";
+                    if (friendlyMessage.contains("1305") || friendlyMessage.contains("当前访问量过大")) {
+                        friendlyMessage = "模型服务暂时繁忙，请稍后再试";
+                    }
                     SseSender.send(emitter, Map.of("type", "error",
-                            "content", error.getMessage() == null ? "模型调用失败" : error.getMessage()));
+                            "content", friendlyMessage));
                     emitter.complete();
                 })
                 .start();
