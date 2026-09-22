@@ -76,7 +76,10 @@ public class ChatStreamController {
                     String friendlyMessage = error.getMessage() != null
                             ? error.getMessage()
                             : "模型调用失败";
-                    if (friendlyMessage.contains("1305") || friendlyMessage.contains("当前访问量过大")) {
+
+                    // 检测三种形式的限流错误（消息可能包含 JSON 或原始描述）
+                    if (friendlyMessage.contains("1305") || friendlyMessage.contains("当前访问量过大")
+                            || friendlyMessage.contains("rate limit") || friendlyMessage.contains("请稍后再试")) {
                         friendlyMessage = "模型服务暂时繁忙，请稍后再试";
                     }
                     SseSender.send(emitter, Map.of("type", "error",
