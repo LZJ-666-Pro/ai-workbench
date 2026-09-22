@@ -16,6 +16,6 @@ spring:
 
 ai:
   llm:
-    base-url: ${AI_LLM_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+    base-url: ${AI_LLM_BASE_URL:https://ws-k4ybdjfu1bcadgfh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
     api-key: ${AI_LLM_API_KEY:${GLM_API_KEY:}}
-    model-name: ${AI_LLM_MODEL:glm-4.7-flash}
+    model-name: ${AI_LLM_MODEL:qwen3.8-flash}
