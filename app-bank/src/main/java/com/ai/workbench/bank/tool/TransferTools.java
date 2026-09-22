@@ -21,6 +21,16 @@ public class TransferTools {
         this.transferService = transferService;
     }
 
+    @Tool("查询转账确认单的真实状态。用户询问之前发起的转账、卡片不见了、能不能继续确认时，先调用此工具，不要凭对话记忆回答")
+    public String queryTransferOrder(
+            @P(value = "转账确认码（UUID）；不清楚时可传空，将查询最近一张确认单", required = false) String confirmId) {
+        try {
+            return transferService.describeOrder(ToolCallContext.currentMemoryId(), confirmId);
+        } catch (Exception e) {
+            return "查询确认单状态异常，请稍后重试。";
+        }
+    }
+
     @Tool("从当前登录客户的账户向他人转账。会先生成一张待确认的转账单，等待用户在确认卡片上操作后才执行")
     public String transfer(
             @P("收款账号或户名") String toAccountOrOwner,

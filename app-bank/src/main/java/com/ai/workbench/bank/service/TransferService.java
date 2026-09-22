@@ -133,10 +133,11 @@ public class TransferService {
     @Transactional
     public TransferResult confirmOrder(String memoryId, String confirmId, boolean confirm) {
         Optional<OrderRow> found = jdbc.query("""
-                SELECT id, from_account, to_account, amount, reason, status, created_at
+                SELECT id, confirm_id, from_account, to_account, amount, reason, status, created_at
                 FROM bank_transfer_order WHERE confirm_id = ?
                 """, (rs, i) -> new OrderRow(
                         rs.getLong("id"),
+                        rs.getString("confirm_id"),
                         rs.getString("from_account"),
                         rs.getString("to_account"),
                         rs.getBigDecimal("amount"),
@@ -227,6 +228,57 @@ public class TransferService {
                         to.map(Account::owner).orElse("?"), order.amount(), newBalance));
     }
 
+    /** 供 queryTransferOrder 工具使用：把确认单的真实状态（含过期判定）讲给模型听 */
+    public String describeOrder(String memoryId, String confirmId) {
+        boolean byId = confirmId != null && !confirmId.isBlank()
+                && !"null".equalsIgnoreCase(confirmId.trim()) && !"-".equals(confirmId.trim());
+        List<OrderRow> rows = byId
+                ? jdbc.query("""
+                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, created_at
+                        FROM bank_transfer_order WHERE confirm_id = ?
+                        """, rowMapper(), confirmId.trim())
+                : jdbc.query("""
+                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, created_at
+                        FROM bank_transfer_order WHERE memory_id = ? ORDER BY id DESC LIMIT 1
+                        """, rowMapper(), memoryId);
+        if (rows.isEmpty()) {
+            return "没有找到转账确认单。";
+        }
+        OrderRow order = rows.get(0);
+        long ageMinutes = (System.currentTimeMillis() - order.createdAt().getTime()) / 60000;
+        String effectiveStatus = order.status();
+        if ("PENDING".equals(effectiveStatus) && ageMinutes > confirmTtlMinutes) {
+            effectiveStatus = "EXPIRED";
+        }
+        String summary = "确认单 %s：%s → %s，金额 %.2f 元%s，创建于 %tF %<tR，当前状态：%s".formatted(
+                order.confirmId(), order.fromAccount(), order.toAccount(), order.amount(),
+                order.reason() == null ? "" : "，附言「%s」".formatted(order.reason()),
+                order.createdAt(), effectiveStatus);
+        audit.record(memoryId, "queryTransferOrder",
+                "查询确认单 %s: %s".formatted(order.confirmId(), effectiveStatus), "SUCCESS");
+        return switch (effectiveStatus) {
+            case "PENDING" -> summary + "（待确认，请在页面的确认卡片上操作，有效期还剩约 "
+                    + Math.max(0, confirmTtlMinutes - ageMinutes) + " 分钟）";
+            case "EXPIRED" -> summary + "（已过期无法确认，请让用户重新发起转账，你将创建新的确认单）";
+            case "EXECUTED" -> summary + "（已执行成功，资金已划转）";
+            case "CANCELLED" -> summary + "（已取消，需要时请重新发起转账）";
+            case "REJECTED" -> summary + "（已被拒绝或风控拦截，请重新发起）";
+            default -> summary;
+        };
+    }
+
+    private org.springframework.jdbc.core.RowMapper<OrderRow> rowMapper() {
+        return (rs, i) -> new OrderRow(
+                rs.getLong("id"),
+                rs.getString("confirm_id"),
+                rs.getString("from_account"),
+                rs.getString("to_account"),
+                rs.getBigDecimal("amount"),
+                rs.getString("reason"),
+                rs.getString("status"),
+                rs.getTimestamp("created_at"));
+    }
+
     private BigDecimal transferredToday(String accountNo) {
         return jdbc.queryForObject("""
                 SELECT COALESCE(SUM(amount), 0) FROM bank_transfer_order
@@ -253,8 +305,8 @@ public class TransferService {
         return found.stream().findFirst();
     }
 
-    private record OrderRow(Long id, String fromAccount, String toAccount, BigDecimal amount,
-                            String reason, String status, Timestamp createdAt) {
+    private record OrderRow(Long id, String confirmId, String fromAccount, String toAccount,
+                            BigDecimal amount, String reason, String status, Timestamp createdAt) {
 
     }
 }

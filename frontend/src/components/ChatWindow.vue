@@ -68,7 +68,13 @@ async function send() {
         reply.content += `\n[错误] ${msg}`
       },
       onConfirmRequest: (card) => {
-        messages.value.push({ role: 'assistant', kind: 'card', content: '', card })
+        // 接口数据不含 status，入列时初始化为待确认
+        messages.value.push({
+          role: 'assistant',
+          kind: 'card',
+          content: '',
+          card: { ...card, status: 'pending' },
+        })
         scrollBottom()
       },
     })
