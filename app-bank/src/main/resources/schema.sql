@@ -69,3 +69,4 @@ CREATE TABLE IF NOT EXISTS bank_audit_log (
 -- 风控黑名单演示账户（见 TransferRiskRules.BLACKLIST）
 INSERT IGNORE INTO bank_account (account_no, owner, balance) VALUES
     ('62220004', '赵六', 100.00);
+

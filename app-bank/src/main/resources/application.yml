@@ -19,7 +19,7 @@ ai:
   llm:
     base-url: ${AI_LLM_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
     api-key: ${AI_LLM_API_KEY:${GLM_API_KEY:}}
-    model-name: ${AI_LLM_MODEL:glm-5.3-flash}
+    model-name: ${AI_LLM_MODEL:glm-4.7-flash}
 
 bank:
   # 演示登录态：当前客户账户号（Phase 2 接入登录后改为从会话中取）

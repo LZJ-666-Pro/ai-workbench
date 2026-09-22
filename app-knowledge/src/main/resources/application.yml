@@ -13,12 +13,11 @@ spring:
     init:
       mode: always
       schema-locations: classpath*:schema.sql
-
 ai:
   llm:
     base-url: ${AI_LLM_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
     api-key: ${AI_LLM_API_KEY:${GLM_API_KEY:}}
-    model-name: ${AI_LLM_MODEL:glm-5.3-flash}
+    model-name: ${AI_LLM_MODEL:glm-4.7-flash}
   # Phase 2 打开下面两项，启用向量模型与 pgvector
   embedding:
     enabled: false

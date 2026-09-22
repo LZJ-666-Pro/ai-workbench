@@ -74,7 +74,7 @@ cd frontend && npm install && npm run dev
 | 项 | 选型 |
 |---|---|
 | 基础 | JDK 21 + Spring Boot 3.5.x |
-| AI 框架 | LangChain4j 1.20.x（OpenAI 兼容接入，默认 GLM glm-5.3-flash，配置化切换） |
+| AI 框架 | LangChain4j 1.20.x（OpenAI 兼容接入，默认 GLM glm-4.7-flash，配置化切换） |
 | 存储 | MySQL 8（会话记忆 + 业务数据，容器端口 13306）+ Redis（预留） |
 | 向量库 | Postgres + pgvector（知识库阶段启用） |
 | 前端 | Vue3 + Vite，fetch + ReadableStream 手解 SSE 帧 |
