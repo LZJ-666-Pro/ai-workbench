@@ -6,6 +6,8 @@
 > —— 智能体通过工具中心调用后台接口执行任务（查询、交易、知识检索），可操作数据库，
 > 并受企业级约束：登录鉴权、工具级权限、审计落库、不可逆操作人工审批（HITL）
 
+---
+
 ## 架构
 
 ```
@@ -21,6 +23,47 @@ platform-core（智能体运行时 + 平台横切能力）
 **核心设计原则「读宽写窄」**：AI 可以获得受限的只读查询能力（白名单表 + 强制 LIMIT）做分析报表；
 但写操作永远不给裸 SQL，必须走业务 Service（规则校验 + 事务）+ 人工确认。
 
+---
+
+## Phase 1 银行交易 Agent 完整演示
+
+以下是「给李四转 200 元」的完整时序图和对话流程：
+
+```
+用户：给李四转 200 元
+  ↓
+【模型调用 transfer() 工具】
+  - 只创建 PENDING 确认单，不碰钱
+  - SSE 推送 confirm_request 事件
+  ↓
+【前端收到事件，渲染确认卡片】
+  - 卡片显示：付款方（张三）→ 收款方（李四）→ 金额（200.00）→ 附言
+  - 两个按钮：「确认转账」「取消」
+  ↓
+用户：确认
+  ↓
+【模型调用 confirmOrder(confirmId, true)】
+  - 状态机 CAS：UPDATE bank_transfer_order SET status='EXECUTED'
+    WHERE confirm_id=? AND status='PENDING'
+  - 规则复检（余额充足，无超限）
+  - 乐观扣款：UPDATE bank_account SET balance=balance-? WHERE account_no=? AND balance>=?
+  - 双向流水落库
+  - 同事务提交
+  ↓
+【前端收到确认结果】
+  - 按钮消失，显示「✅ 已确认」+ 回执消息
+  - 张三余额：12850.50 → 12650.50
+```
+
+**核心设计点**：
+- **执行权在人类手里**：模型只能创建确认单，资金变动的唯一入口是确认卡片
+- **幂等核心**：同一 confirmId 重复提交只会执行一次（CAS 阻塞）
+- **数据库是唯一事实来源**：模型看不见确认单真实状态，必须通过 `queryTransferOrder()` 工具查库
+
+完整演示脚本见 `PHASE1_DEMO.md`（5 个验收场景 + 2 个附加场景）。
+
+---
+
 ## 模块结构
 
 | 模块 | 说明 | 端口 |
@@ -32,6 +75,8 @@ platform-core（智能体运行时 + 平台横切能力）
 | frontend | Vue3 + Vite 控制台，一个前端对接三个应用 | 5173 |
 
 > Phase 2 将把三个应用合并为单一 `app-platform`（Maven 模块保留，代码组织不变）。
+
+---
 
 ## 快速开始
 
@@ -62,12 +107,16 @@ cd frontend && npm install && npm run dev
 
 > 本机默认 JDK 是 8，构建/运行需切 JDK 21：`export JAVA_HOME=/d/download/code/jdkVersion/jdk21`
 
+---
+
 ## 接口
 
 - `GET /api/chat/{agent}/stream?memoryId=会话ID&message=输入` — SSE 流式对话
   （事件：`delta` 增量 / `done` 含 token 用量 / `error`）
 - `GET /api/chat/agents` — 已注册的 Agent 列表
 - `GET /{agent}` 对应应用静态页（目前 app-bank 有聊天 demo 页）
+
+---
 
 ## 技术选型
 
@@ -80,13 +129,17 @@ cd frontend && npm install && npm run dev
 | 前端 | Vue3 + Vite，fetch + ReadableStream 手解 SSE 帧 |
 | env | `.env` + spring-dotenv + docker compose 变量替换，一处定义两端生效 |
 
+---
+
 ## 路线图
 
 - [x] **Phase 0** 平台底座：LLM 配置化接入、SSE 流式、MySQL 会话记忆、Agent 注册/工具框架、token 用量日志、RAG 配置位、docker-compose
-- [ ] **Phase 1** 银行交易 Agent：账户/流水落库（已完）→ 转账 + human-in-the-loop 确认卡片、幂等键、审计日志、限额/白名单硬规则
+- [x] **Phase 1** 银行交易 Agent：账户/流水落库 → 转账 + human-in-the-loop 确认卡片、幂等键、审计日志、限额/白名单硬规则
 - [ ] **Phase 2** 平台化：合并三应用为 `app-platform`、Spring Security 登录、工具级权限（无权限工具对模型不可见）、平台级审计中心、前端控制台布局（侧边导航 + 全局 AI 助手）、「运营助手」Agent + 只读 SQL 分析工具
 - [ ] **Phase 3** 企业文档中心：真实数据源接入、路由 Agent、查询改写、混合检索（向量 + 全文）、引用溯源、评测集与回归脚本
 - [ ] **Phase 4** 固化：统一部署、评测补齐、架构图 + 关键决策记录（ADR）、简历叙事
+
+---
 
 ## 设计约定
 
@@ -95,3 +148,4 @@ cd frontend && npm install && npm run dev
 - 换模型只改环境变量，不改代码；RAG 组件按需装配（`ai.embedding.enabled` / `ai.rag.enabled`）
 - 确定性约束（限额、权限、幂等）在代码层硬执行，不交给 LLM 自觉
 - 「读宽写窄」：AI 的只读能力可以放宽，写能力必须走业务规则 + 人工确认
+- **数据库是唯一事实来源**：模型看不见确认单的真实状态（过期/取消），必须通过 `queryTransferOrder()` 工具查库，不能凭对话记忆
