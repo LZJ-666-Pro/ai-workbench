@@ -106,11 +106,14 @@ async function switchSession(sessionId: string) {
   scrollBottom()
 }
 
-function newSession() {
+async function newSession() {
   memoryId = newMemoryId(props.agent)
   messages.value = [{ role: 'assistant', kind: 'text', content: props.welcome }]
+  // 清空会话列表，显示"暂无历史会话"
   sessions.value = []
-  emit('newSession')
+  // 重新加载会话列表
+  await loadSessions()
+  scrollBottom()
 }
 
 function toggleSidebar() {
@@ -175,15 +178,6 @@ async function respondCard(card: CardMsg, action: 'confirm' | 'cancel') {
   scrollBottom()
 }
 
-/** 新建会话：换 memoryId 并清空界面 */
-function reset() {
-  controller?.abort()
-  memoryId = newMemoryId(props.agent)
-  messages.value = [{ role: 'assistant', kind: 'text', content: props.welcome }]
-  sessions.value = []
-  scrollBottom()
-}
-
 function scrollBottom() {
   nextTick(() => listEl.value?.scrollTo({ top: listEl.value.scrollHeight }))
 }
@@ -194,24 +188,35 @@ function scrollBottom() {
     <div class="chat-head">
       <div class="chat-title">
         <button class="ghost" :disabled="loadingSessions" @click="toggleSidebar">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path d="M4 6h16M4 12h16M4 18h16" stroke-width="2" stroke-linecap="round"/>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          侧边栏会话列表
+          <span>会话列表</span>
         </button>
         <h2>{{ title }}</h2>
       </div>
-      <button class="ghost" :disabled="streaming" @click="reset">新建会话</button>
+      <button class="ghost" :disabled="streaming" @click="newSession">新建会话</button>
     </div>
 
     <!-- 侧边栏会话列表 -->
     <aside v-if="sidebarOpen" class="sidebar" ref="sidebarEl">
       <div class="sidebar-header">
-        <span>会话历史（{{ sessions.length }}）</span>
-        <button class="ghost" @click="newSession">+ 新会话</button>
+        <div class="sidebar-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <span>会话历史（{{ sessions.length }}）</span>
+        </div>
+        <button class="ghost" @click="newSession" title="新建会话">+ 新会话</button>
       </div>
       <div v-if="loadingSessions" class="loading">加载中…</div>
-      <div v-else-if="sessions.length === 0" class="empty">暂无历史会话</div>
+      <div v-else-if="sessions.length === 0" class="empty">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <p>暂无历史会话</p>
+        <p class="hint">开始新对话后，历史记录会显示在这里</p>
+      </div>
       <div
         v-else
         v-for="session in sessions"
@@ -220,8 +225,10 @@ function scrollBottom() {
         :class="{ active: session.memoryId === memoryId }"
         @click="switchSession(session.memoryId)"
       >
-        <span class="session-label">{{ session.label }}</span>
-        <span class="session-time">{{ session.lastTime ? formatTime(session.lastTime) : '' }}</span>
+        <div class="session-info">
+          <span class="session-label">{{ session.label }}</span>
+          <span class="session-time">{{ formatTime(session.lastTime) }}</span>
+        </div>
       </div>
     </aside>
 
@@ -285,70 +292,115 @@ function scrollBottom() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--border);
+  background: var(--card);
 }
 
 .chat-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .chat-title h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
+  font-weight: 600;
 }
 
 .sidebar {
-  width: 260px;
+  width: 280px;
   border-right: 1px solid var(--border);
+  background: var(--bg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: width 0.3s ease;
 }
 
 .sidebar-header {
-  padding: 12px 16px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border);
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
 }
 
-.loading,
-.empty {
-  padding: 20px;
+.sidebar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sidebar-title svg {
+  color: var(--accent);
+}
+
+.loading {
+  padding: 40px 20px;
   text-align: center;
   color: var(--text-muted);
+  font-size: 13px;
+}
+
+.empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.empty svg {
+  color: var(--border);
+  margin-bottom: 12px;
+}
+
+.empty p {
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.empty .hint {
+  font-size: 12px;
+  opacity: 0.7;
 }
 
 .session-item {
   padding: 12px 16px;
   cursor: pointer;
   border-bottom: 1px solid var(--border);
-  transition: background 0.2s;
+  transition: all 0.2s;
 }
 
 .session-item:hover {
-  background: var(--bg);
+  background: var(--card);
 }
 
 .session-item.active {
-  background: var(--bg);
+  background: var(--accent);
   border-left: 3px solid var(--accent);
 }
 
+.session-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .session-label {
-  display: block;
-  font-size: 14px;
+  flex: 1;
+  font-size: 13px;
   color: var(--text);
+  font-weight: 500;
 }
 
 .session-time {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .chat-body {
@@ -443,23 +495,35 @@ function scrollBottom() {
 
 .chat-input {
   display: flex;
-  gap: 8px;
-  padding: 12px 16px;
+  gap: 10px;
+  padding: 14px 20px;
   border-top: 1px solid var(--border);
+  background: var(--card);
+}
+
+.chat-input input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  transition: border-color 0.2s;
+}
+
+.chat-input input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.chat-input input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .chat-input input {
   flex: 1;
 }
 
-/** 格式化时间（只显示 MM-DD HH:mm） */
-function formatTime(timestamp: string): string {
-  if (!timestamp) return ''
-  const date = new Date(timestamp)
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hours = String(date.getHours()).padStart(2, '0')
-  const minutes = String(date.getMinutes()).padStart(2, '0')
-  return `${month}-${day} ${hours}:${minutes}`
-}
-</script>
+</style>
