@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions } from '../api/chat'
+import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions } from '../api/chat'
 import type { ConfirmRequestData } from '../api/chat'
 
 export interface Suggestion {
@@ -58,6 +58,9 @@ const loadingSessions = ref(false)
 const messages = ref<Msg[]>([])
 let memoryId = ''
 let controller: AbortController | null = null
+// 会话删除：menuFor = 展开"…"菜单的会话 ID；pendingDelete = 等待确认删除的会话
+const menuFor = ref<string | null>(null)
+const pendingDelete = ref<SidebarSession | null>(null)
 
 /** 没有任何消息时显示欢迎屏（DeepSeek/Kimi 风格空状态） */
 const showHero = computed(() => messages.value.length === 0 && !streaming.value)
@@ -166,6 +169,29 @@ function newSession() {
   sessions.value = sessions.value.filter(s => s.label !== '新对话')
   sessions.value.unshift({ memoryId, label: '新对话', lastTime: new Date().toISOString(), active: true })
   scrollBottom()
+}
+
+/** 删除会话：DB 正本 + 本地缓存一起清；若删的是当前会话则自动切走 */
+async function removeSession(sessionId: string) {
+  pendingDelete.value = null
+  try {
+    await deleteSession(props.basePath, props.agent, sessionId)
+  } catch { /* 后端不可用也继续清理本地，下次同步时以 DB 为准 */ }
+  sessions.value = sessions.value.filter(s => s.memoryId !== sessionId)
+  localStorage.removeItem(`aiwb-msgs-${props.agent}-${sessionId}`)
+  // 清理会话名
+  const labels = loadLabelMap()
+  delete labels[sessionId]
+  localStorage.setItem(`aiwb-labels-${props.agent}`, JSON.stringify(labels))
+  cacheSessions(props.agent, sessions.value)
+  if (memoryId === sessionId) {
+    const next = sessions.value[0]
+    if (next) {
+      await switchSession(next.memoryId)
+    } else {
+      newSession()
+    }
+  }
 }
 
 function toggleSidebar() {
@@ -304,11 +330,31 @@ function formatTime(timestamp: string): string {
             v-for="session in sessions"
             :key="session.memoryId"
             class="session-item"
-            :class="{ active: session.memoryId === memoryId }"
+            :class="{ active: session.memoryId === memoryId, 'menu-open': menuFor === session.memoryId }"
             @click="switchSession(session.memoryId)"
           >
             <span class="session-label">{{ session.label }}</span>
             <span class="session-time">{{ formatTime(session.lastTime) }}</span>
+            <button
+              class="session-more"
+              title="更多操作"
+              @click.stop="menuFor = menuFor === session.memoryId ? null : session.memoryId"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="5" cy="12" r="2" />
+                <circle cx="12" cy="12" r="2" />
+                <circle cx="19" cy="12" r="2" />
+              </svg>
+            </button>
+            <!-- DeepSeek 式下拉菜单 -->
+            <div v-if="menuFor === session.memoryId" class="session-menu" @click.stop>
+              <button class="session-menu-item danger" @click="pendingDelete = session; menuFor = null">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                删除
+              </button>
+            </div>
           </div>
         </template>
       </div>
@@ -317,6 +363,8 @@ function formatTime(timestamp: string): string {
         <span class="footer-logo">🏦</span>
         <span>AI Workbench · 银行助手</span>
       </div>
+      <!-- 菜单展开时的全屏透明遮罩：点击任意处关闭 -->
+      <div v-if="menuFor" class="menu-mask" @click="menuFor = null"></div>
     </aside>
 
     <!-- 主聊天区域 -->
@@ -417,6 +465,18 @@ function formatTime(timestamp: string): string {
         <p class="disclaimer">内容由 AI 生成，仅供参考 · 转账操作需二次确认</p>
       </div>
     </main>
+
+    <!-- 删除会话二次确认弹窗 -->
+    <div v-if="pendingDelete" class="confirm-mask" @click.self="pendingDelete = null">
+      <div class="confirm-dialog">
+        <h3 class="confirm-title">删除会话</h3>
+        <p class="confirm-text">确定删除「{{ pendingDelete.label }}」吗？删除后聊天记录将不可恢复。</p>
+        <div class="confirm-actions">
+          <button class="confirm-btn ghost" @click="pendingDelete = null">取消</button>
+          <button class="confirm-btn danger" @click="removeSession(pendingDelete.memoryId)">删除</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -502,6 +562,7 @@ function formatTime(timestamp: string): string {
 }
 
 .session-item {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -539,6 +600,141 @@ function formatTime(timestamp: string): string {
   font-size: 11px;
   color: var(--text-dim);
   white-space: nowrap;
+}
+
+/* "…" 更多按钮：hover 或菜单展开时显现 */
+.session-more {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.session-item:hover .session-more,
+.session-item.menu-open .session-more {
+  opacity: 1;
+}
+
+.session-more:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: var(--text);
+}
+
+/* DeepSeek 式会话下拉菜单 */
+.session-menu {
+  position: absolute;
+  right: 8px;
+  top: calc(100% + 2px);
+  z-index: 12;
+  min-width: 96px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+}
+
+.session-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.session-menu-item.danger {
+  color: #e5484d;
+}
+
+.session-menu-item.danger:hover {
+  background: #fef1f1;
+}
+
+/* 菜单展开时的全屏透明遮罩：点击任意处关闭菜单 */
+.menu-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+}
+
+/* ===== 删除会话确认弹窗 ===== */
+.confirm-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.confirm-dialog {
+  width: 320px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+}
+
+.confirm-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.confirm-text {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.confirm-btn {
+  padding: 7px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.confirm-btn.ghost {
+  background: #f2f3f5;
+  color: var(--text);
+}
+
+.confirm-btn.ghost:hover {
+  background: #e8e9eb;
+}
+
+.confirm-btn.danger {
+  background: #e5484d;
+  color: #fff;
+}
+
+.confirm-btn.danger:hover {
+  background: #dc3d43;
 }
 
 .sidebar-footer {

@@ -110,6 +110,16 @@ export async function listSessions(basePath: string, agent: string): Promise<Ses
   return await resp.json()
 }
 
+/** 删除指定会话（DB 正本删除，调用方需自行清理本地缓存） */
+export async function deleteSession(basePath: string, agent: string, memoryId: string): Promise<void> {
+  const resp = await fetch(`${basePath}/api/sessions/${agent}/${encodeURIComponent(memoryId)}`, {
+    method: 'DELETE',
+  })
+  if (!resp.ok) {
+    throw new Error(`删除会话失败: HTTP ${resp.status}`)
+  }
+}
+
 /** 获取当前会话 ID；没有则新建（会话按 Agent 隔离，刷新页面不丢） */
 export function getMemoryId(agent: string): string {
   const key = `aiwb-current-${agent}`
