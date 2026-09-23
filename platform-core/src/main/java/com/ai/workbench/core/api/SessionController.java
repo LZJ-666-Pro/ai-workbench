@@ -5,6 +5,7 @@ import java.util.List;
 
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
+import dev.langchain4j.data.message.UserMessage;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -39,16 +40,41 @@ public class SessionController {
         String pattern = identity == null || identity.isBlank()
                 ? agent + ":%"
                 : agent + ":" + identity + ":%";
-        String sql = "SELECT memory_id, updated_at FROM chat_memory WHERE memory_id LIKE ? ORDER BY updated_at DESC LIMIT 100";
+        String sql = "SELECT memory_id, content, updated_at FROM chat_memory WHERE memory_id LIKE ? ORDER BY updated_at DESC LIMIT 100";
         List<SessionRecord> sessions = jdbc.query(sql, (rs, i) -> new SessionRecord(
                         rs.getString("memory_id"),
+                        extractTitle(rs.getString("content")),
                         rs.getTimestamp("updated_at")),
                 pattern);
         return sessions.isEmpty() ? List.of() : sessions;
     }
 
-    /** 前端返回的会话记录 */
-    public record SessionRecord(String memoryId, java.sql.Timestamp updatedAt) {
+    /**
+     * 从会话消息 JSON 里取第一条用户消息做会话标题（类似 DeepSeek/ChatGPT 的自动命名）。
+     * 截前 24 字，太长补省略号；解析失败返回空串，前端用 ID 尾段兜底。
+     */
+    private static String extractTitle(String contentJson) {
+        if (contentJson == null || contentJson.isBlank()) {
+            return "";
+        }
+        try {
+            for (ChatMessage msg : ChatMessageDeserializer.messagesFromJson(contentJson)) {
+                if (msg instanceof UserMessage userMsg) {
+                    String text = userMsg.singleText();
+                    if (text != null && !text.isBlank()) {
+                        text = text.replaceAll("\\s+", " ").trim();
+                        return text.length() > 24 ? text.substring(0, 24) + "…" : text;
+                    }
+                }
+            }
+        } catch (Exception ignore) {
+            // 内容不是合法消息 JSON 等情况，退回空标题
+        }
+        return "";
+    }
+
+    /** 前端返回的会话记录（title 为自动生成的会话标题，可能为空） */
+    public record SessionRecord(String memoryId, String title, java.sql.Timestamp updatedAt) {
 
     }
 

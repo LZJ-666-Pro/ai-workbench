@@ -152,7 +152,8 @@ async function loadSessions() {
     sessions.value = apiSessions
       .map((s: any) => ({
         ...s,
-        label: labels[s.memoryId] || `会话 ${shortId(s.memoryId)}`,
+        // 命名优先级：用户手动命名 > 后端自动标题（首条消息） > ID 尾段兜底
+        label: labels[s.memoryId] || s.title || `会话 ${shortId(s.memoryId)}`,
         // 后端返回 updatedAt，本地项用 lastTime，这里统一成 lastTime 供排序/显示
         lastTime: s.lastTime || s.updatedAt || '',
       }))

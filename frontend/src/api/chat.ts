@@ -34,6 +34,8 @@ export interface Msg {
 
 export interface SessionRecord {
   memoryId: string
+  /** 自动生成的会话标题（后端取首条用户消息，可能为空） */
+  title?: string
   updatedAt: string
 }
 
