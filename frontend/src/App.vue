@@ -10,7 +10,7 @@ const isChatRoute = computed(() =>
 
 const isAdminRoute = computed(() => route.path.startsWith('/admin'))
 
-/** 顶栏导航：银行助手页只保留业务相关入口；管理后台由侧栏菜单承担导航，顶栏只显示角色 */
+/** 顶栏导航：首页只放三个应用入口；银行助手页保留其管理后台；管理后台页由侧栏菜单承担导航 */
 const allLinks = [
   { to: '/bank', label: '🏦 银行助手' },
   { to: '/knowledge', label: '📚 知识库' },
@@ -19,9 +19,13 @@ const allLinks = [
 ]
 const navLinks = computed(() => {
   if (isAdminRoute.value) return []
-  return route.path.startsWith('/bank')
-    ? allLinks.filter(l => l.to === '/bank' || l.to === '/admin')
-    : allLinks
+  if (route.path.startsWith('/bank')) {
+    return allLinks.filter(l => l.to === '/bank' || l.to === '/admin')
+  }
+  if (route.path === '/') {
+    return allLinks.filter(l => l.to !== '/admin')
+  }
+  return allLinks
 })
 </script>
 
