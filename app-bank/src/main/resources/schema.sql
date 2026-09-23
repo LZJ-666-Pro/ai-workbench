@@ -70,3 +70,15 @@ CREATE TABLE IF NOT EXISTS bank_audit_log (
 INSERT IGNORE INTO bank_account (account_no, owner, balance) VALUES
     ('62220004', '赵六', 100.00);
 
+-- 对公客户演示账户（多服务对象）：对公账号按段位约定 8 开头（DbBankService.describeOwner）
+INSERT IGNORE INTO bank_account (account_no, owner, balance) VALUES
+    ('82280001', '星辰科技', 520000.00);
+
+-- 对公流水（显式主键幂等，id 从 101 起避开测试转账占用的自增段）：
+-- balance 520000 = 期初 480000 + 88000 货款回款 - 11500 报销代发 + 3500 采购退款
+INSERT IGNORE INTO bank_transaction (id, account_no, amount, description) VALUES
+    (101, '82280001', 480000.00, '2026-08-31 期初余额 +480000.00'),
+    (102, '82280001', 88000.00, '2026-09-08 XX贸易公司货款回账 +88000.00'),
+    (103, '82280001', -11500.00, '2026-09-10 员工报销代发 -11500.00'),
+    (104, '82280001', 3500.00, '2026-09-15 办公设备采购退款 +3500.00');
+

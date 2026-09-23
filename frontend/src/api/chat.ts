@@ -100,9 +100,37 @@ export async function loadHistoryMessages(
   return (await resp.json()) as HistoryMsg[]
 }
 
-/** 从数据库获取指定 Agent 的会话列表 */
-export async function listSessions(basePath: string, agent: string): Promise<SessionRecord[]> {
-  const resp = await fetch(`${basePath}/api/sessions/${agent}`)
+/** 银行助手的服务对象（身份选择器数据源，来自后端 BankIdentityController） */
+export interface IdentityInfo {
+  id: string
+  displayName: string
+  role: string
+  welcome: string
+  suggestions: string[]
+}
+
+/** 从后端拉取可选身份列表（仅启用多服务对象的应用有该接口） */
+export async function listIdentities(basePath: string): Promise<IdentityInfo[]> {
+  const resp = await fetch(`${basePath}/api/bank/identities`)
+  if (!resp.ok) {
+    throw new Error(`加载身份列表失败: HTTP ${resp.status}`)
+  }
+  return await resp.json()
+}
+
+/** 读取当前身份；未设置返回 null（无身份模式，兼容知识库/面试等应用） */
+export function getIdentity(agent: string): string | null {
+  return localStorage.getItem(`aiwb-identity-${agent}`)
+}
+
+export function setIdentity(agent: string, id: string) {
+  localStorage.setItem(`aiwb-identity-${agent}`, id)
+}
+
+/** 从数据库获取指定 Agent 的会话列表；identity 传入时按身份过滤（多服务对象隔离） */
+export async function listSessions(basePath: string, agent: string, identity?: string): Promise<SessionRecord[]> {
+  const query = identity ? `?identity=${encodeURIComponent(identity)}` : ''
+  const resp = await fetch(`${basePath}/api/sessions/${agent}${query}`)
   if (!resp.ok) {
     // 抛错而不是返回空数组：调用方需要区分"没有会话"和"后端不可用"（后者要走缓存兜底）
     throw new Error(`加载会话列表失败: HTTP ${resp.status}`)
@@ -120,20 +148,23 @@ export async function deleteSession(basePath: string, agent: string, memoryId: s
   }
 }
 
-/** 获取当前会话 ID；没有则新建（会话按 Agent 隔离，刷新页面不丢） */
-export function getMemoryId(agent: string): string {
+/** 获取当前会话 ID；没有则新建（会话按 Agent 与身份隔离，刷新页面不丢） */
+export function getMemoryId(agent: string, identity?: string): string {
   const key = `aiwb-current-${agent}`
   let id = localStorage.getItem(key)
-  // 后端按 `${agent}:` 前缀查询会话列表，旧版裸 UUID 一律作废重建
-  if (!id || !id.startsWith(`${agent}:`)) {
-    id = newMemoryId(agent)
+  // 后端按 `${agent}:{identity}:` 前缀查询会话列表，与当前身份不匹配的一律作废重建
+  const prefix = identity ? `${agent}:${identity}:` : `${agent}:`
+  if (!id || !id.startsWith(prefix)) {
+    id = newMemoryId(agent, identity)
   }
   return id
 }
 
-/** 新开一个会话（后端按 memoryId 隔离上下文，带 agent 前缀供会话列表查询） */
-export function newMemoryId(agent: string): string {
-  const id = `${agent}:${crypto.randomUUID()}`
+/** 新开一个会话（后端按 memoryId 隔离上下文；带身份时格式为 agent:{identity}:uuid） */
+export function newMemoryId(agent: string, identity?: string): string {
+  const id = identity
+    ? `${agent}:${identity}:${crypto.randomUUID()}`
+    : `${agent}:${crypto.randomUUID()}`
   localStorage.setItem(`aiwb-current-${agent}`, id)
   return id
 }

@@ -30,11 +30,15 @@ public class SessionController {
 
     /**
      * 返回指定 Agent 的所有会话列表，按最后更新时间降序。
-     * 每条记录包含 memoryId 和 updated_at，前端用于渲染侧边栏会话列表。
+     * 可选参数 identity：传入时只返回以 {agent}:{identity}: 开头的会话（多服务对象按身份隔离），
+     * 不传时保持原行为（返回 {agent}: 下全部会话）。
      */
     @GetMapping("/{agent}")
-    public List<SessionRecord> listSessions(@PathVariable String agent) {
-        String pattern = agent + ":%";
+    public List<SessionRecord> listSessions(@PathVariable String agent,
+                                            @RequestParam(required = false) String identity) {
+        String pattern = identity == null || identity.isBlank()
+                ? agent + ":%"
+                : agent + ":" + identity + ":%";
         String sql = "SELECT memory_id, updated_at FROM chat_memory WHERE memory_id LIKE ? ORDER BY updated_at DESC LIMIT 100";
         List<SessionRecord> sessions = jdbc.query(sql, (rs, i) -> new SessionRecord(
                         rs.getString("memory_id"),

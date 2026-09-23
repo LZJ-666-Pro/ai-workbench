@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import com.ai.workbench.bank.audit.ToolAuditLogger;
+import com.ai.workbench.bank.identity.BankIdentity;
 import com.ai.workbench.bank.risk.RiskDecision;
 import com.ai.workbench.bank.risk.TransferRiskRules;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,10 +26,6 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 public class TransferService {
-
-    /** 演示登录态固定为该账户；Phase 2 接入登录后改为从会话中取当前用户 */
-    @Value("${bank.current-account-no:62220001}")
-    private String currentAccountNo;
 
     /** 确认单有效期（分钟），超时确认会被拒绝并标记 REJECTED */
     @Value("${bank.transfer-confirm-ttl-minutes:10}")
@@ -71,10 +68,15 @@ public class TransferService {
 
     }
 
-    /** 模型可调用的第一段：预检 + 建 PENDING 单，不碰钱 */
+    /** 模型可调用的第一段：预检 + 建 PENDING 单，不碰钱。付款账户由服务对象身份决定 */
     public TransferResult createPendingOrder(String memoryId, String toAccountOrOwner,
                                              BigDecimal amount, String reason) {
-        Optional<Account> from = findAccount(currentAccountNo);
+        BankIdentity identity = BankIdentity.fromMemoryId(memoryId);
+        if (!identity.canTransfer()) {
+            audit.record(memoryId, "transfer", "员工身份尝试发起转账", "DENY");
+            return TransferResult.deny("内部员工账号没有资金操作权限，无法发起转账。");
+        }
+        Optional<Account> from = findAccount(identity.boundAccount());
         if (from.isEmpty()) {
             return TransferResult.fail("付款账户不存在");
         }
@@ -87,7 +89,8 @@ public class TransferService {
         }
 
         RiskDecision decision = TransferRiskRules.check(
-                to.get().accountNo(), amount, from.get().balance(), transferredToday(from.get().accountNo()));
+                identity, to.get().accountNo(), amount, from.get().balance(),
+                transferredToday(from.get().accountNo()));
         if (!decision.allowed()) {
             audit.record(memoryId, "transfer",
                     "预检拒绝: to=%s, amount=%s".formatted(to.get().accountNo(), amount), "DENY");
@@ -181,13 +184,14 @@ public class TransferService {
             return TransferResult.pending("该确认单已执行过，本次重复操作被幂等拦截，资金未变动。");
         }
 
-        // 规则复检：卡片展示期间余额/日累计可能已被其他交易改变
+        // 规则复检：卡片展示期间余额/日累计可能已被其他交易改变（限额按会话身份分档）
         Optional<Account> from = findAccount(order.fromAccount());
         if (from.isEmpty()) {
             return TransferResult.fail("付款账户不存在");
         }
         RiskDecision decision = TransferRiskRules.check(
-                order.toAccount(), order.amount(), from.get().balance(), transferredToday(order.fromAccount()));
+                BankIdentity.fromMemoryId(memoryId), order.toAccount(), order.amount(),
+                from.get().balance(), transferredToday(order.fromAccount()));
         if (!decision.allowed()) {
             jdbc.update("UPDATE bank_transfer_order SET status = 'REJECTED' WHERE id = ?", order.id());
             audit.record(memoryId, "transfer.confirm",

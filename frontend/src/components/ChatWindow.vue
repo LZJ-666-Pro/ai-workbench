@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions } from '../api/chat'
-import type { ConfirmRequestData } from '../api/chat'
+import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions, listIdentities, getIdentity, setIdentity } from '../api/chat'
+import type { ConfirmRequestData, IdentityInfo } from '../api/chat'
 
 export interface Suggestion {
   icon: string
@@ -22,6 +22,8 @@ const props = withDefaults(defineProps<{
   botTagline?: string
   /** 欢迎屏建议问题（点击直接发送） */
   suggestions?: Suggestion[]
+  /** 启用多服务对象身份切换（银行助手专属：零售客户/内部员工/对公客户） */
+  enableIdentity?: boolean
 }>(), {
   placeholder: '输入消息，回车发送…',
 })
@@ -62,13 +64,46 @@ let controller: AbortController | null = null
 const menuFor = ref<string | null>(null)
 const pendingDelete = ref<SidebarSession | null>(null)
 
+// 多服务对象：可选身份列表与当前身份（仅 enableIdentity 时使用）
+const identityList = ref<IdentityInfo[]>([])
+const currentIdentityId = ref('')
+
 /** 没有任何消息时显示欢迎屏（DeepSeek/Kimi 风格空状态） */
 const showHero = computed(() => messages.value.length === 0 && !streaming.value)
 
 const heroName = computed(() => props.botName ?? props.title)
 
+/** 当前身份的元数据；未启用或未加载到时回退 props 默认值 */
+const currentIdentity = computed(() =>
+  identityList.value.find(i => i.id === currentIdentityId.value) ?? null)
+
+/** 身份建议问题的展示图标（后端只给文本，图标按序循环） */
+const HERO_ICONS = ['💰', '📋', '💸', '🧾']
+
+const heroWelcome = computed(() =>
+  currentIdentity.value?.welcome ?? props.botTagline ?? props.welcome)
+
+const heroSuggestions = computed<Suggestion[]>(() => {
+  const fromIdentity = currentIdentity.value?.suggestions
+  if (fromIdentity?.length) {
+    return fromIdentity.map((label, i) => ({ icon: HERO_ICONS[i % HERO_ICONS.length], label }))
+  }
+  return props.suggestions ?? []
+})
+
 onMounted(async () => {
-  memoryId = getMemoryId(props.agent)
+  // 多服务对象模式：先定身份（localStorage 记住上次选择），会话与提示词都按身份隔离
+  if (props.enableIdentity) {
+    try {
+      identityList.value = await listIdentities(props.basePath)
+    } catch { /* 接口不可用时退化为无身份模式 */ }
+    currentIdentityId.value = getIdentity(props.agent)
+      ?? (identityList.value.length ? identityList.value[0].id : '')
+    if (currentIdentityId.value) {
+      setIdentity(props.agent, currentIdentityId.value)
+    }
+  }
+  memoryId = getMemoryId(props.agent, currentIdentityId.value || undefined)
   // 先用本地缓存秒开（后端不在线时也有数据可看），再用 DB 最新数据覆盖
   const cached = readCachedMessages(props.agent, memoryId)
   if (cached.length) {
@@ -107,7 +142,7 @@ async function loadSessions() {
   loadingSessions.value = true
   try {
     const labels = loadLabelMap()
-    const apiSessions = await listSessions(props.basePath, props.agent)
+    const apiSessions = await listSessions(props.basePath, props.agent, currentIdentityId.value || undefined)
     sessions.value = apiSessions
       .map((s: any) => ({
         ...s,
@@ -163,11 +198,29 @@ async function switchSession(sessionId: string) {
 }
 
 function newSession() {
-  memoryId = newMemoryId(props.agent)
+  memoryId = newMemoryId(props.agent, currentIdentityId.value || undefined)
   messages.value = []
   // 立即在侧栏顶部出现"新对话"记录（此刻还未落库，不查 DB 以免把它冲掉）
   sessions.value = sessions.value.filter(s => s.label !== '新对话')
   sessions.value.unshift({ memoryId, label: '新对话', lastTime: new Date().toISOString(), active: true })
+  scrollBottom()
+}
+
+/** 切换服务对象身份：中断进行中的回复，清空工作区，按新身份重建会话与列表 */
+function switchIdentity(id: string) {
+  if (id === currentIdentityId.value) return
+  controller?.abort()
+  controller = null
+  streaming.value = false
+  setIdentity(props.agent, id)
+  currentIdentityId.value = id
+  messages.value = []
+  menuFor.value = null
+  pendingDelete.value = null
+  // 当前会话属于旧身份，getMemoryId 检测到前缀不匹配会自动开新会话
+  memoryId = getMemoryId(props.agent, id)
+  sessions.value = []
+  loadSessions()
   scrollBottom()
 }
 
@@ -311,6 +364,18 @@ function formatTime(timestamp: string): string {
     <!-- 侧边栏：会话列表 -->
     <aside class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar-inner">
+        <!-- 多服务对象：身份选择器（零售客户/内部员工/对公客户） -->
+        <div v-if="enableIdentity && identityList.length" class="identity-bar">
+          <span class="identity-label">服务对象</span>
+          <select
+            class="identity-select"
+            :value="currentIdentityId"
+            @change="switchIdentity(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="i in identityList" :key="i.id" :value="i.id">{{ i.displayName }}</option>
+          </select>
+        </div>
+
         <button class="new-chat" @click="newSession">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <path d="M12 5v14M5 12h14" stroke-linecap="round" stroke-linejoin="round" />
@@ -386,10 +451,10 @@ function formatTime(timestamp: string): string {
         <div v-if="showHero" class="hero">
           <div class="hero-logo">🏦</div>
           <h1 class="hero-title">你好，我是{{ heroName }}</h1>
-          <p class="hero-tagline">{{ props.botTagline ?? welcome }}</p>
-          <div v-if="suggestions?.length" class="suggestions">
+          <p class="hero-tagline">{{ heroWelcome }}</p>
+          <div v-if="heroSuggestions.length" class="suggestions">
             <button
-              v-for="s in suggestions"
+              v-for="s in heroSuggestions"
               :key="s.label"
               class="suggestion"
               @click="sendSuggestion(s)"
@@ -530,6 +595,43 @@ function formatTime(timestamp: string): string {
 
 .new-chat:hover {
   background: #3d5ce0;
+}
+
+/* 多服务对象：身份选择器（侧栏顶部） */
+.identity-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 0 2px;
+}
+
+.identity-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.identity-select {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.identity-select:hover {
+  border-color: var(--accent);
+}
+
+.identity-select:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .sidebar-caption {

@@ -36,8 +36,31 @@ public class DbBankService {
         List<String> items = jdbc.query(
                 "SELECT account_no, owner, balance FROM bank_account ORDER BY account_no",
                 (rs, i) -> "%s（%s）余额 %.2f 元".formatted(
-                        rs.getString("account_no"), rs.getString("owner"), rs.getBigDecimal("balance")));
+                        rs.getString("account_no"),
+                        describeOwner(rs.getString("account_no"), rs.getString("owner")),
+                        rs.getBigDecimal("balance")));
         return String.join("；", items);
+    }
+
+    /** 全行概况：内部员工工具（bankOverview）的数据源 */
+    public String overview() {
+        return jdbc.queryForObject("""
+                SELECT accounts, personal, corporate, owners, total FROM (
+                    SELECT COUNT(*)                       AS accounts,
+                           SUM(account_no NOT LIKE '8%')  AS personal,
+                           SUM(account_no LIKE '8%')      AS corporate,
+                           COUNT(DISTINCT owner)          AS owners,
+                           COALESCE(SUM(balance), 0)      AS total
+                    FROM bank_account) t
+                """,
+                (rs, i) -> "全行账户 %d 个（个人 %d / 对公 %d），客户 %d 名，总余额 %.2f 元".formatted(
+                        rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getLong(4),
+                        rs.getBigDecimal(5).doubleValue()));
+    }
+
+    /** 账号段位约定：8 开头为对公账户，其余为个人账户 */
+    public static String describeOwner(String accountNo, String owner) {
+        return accountNo.startsWith("8") ? owner + "·对公" : owner + "·个人";
     }
 
     private List<String> recentTransactions(String accountNo) {

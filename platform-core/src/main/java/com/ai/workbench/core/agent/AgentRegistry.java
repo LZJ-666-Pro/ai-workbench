@@ -28,7 +28,7 @@ public class AgentRegistry {
         for (AgentSpec spec : specs.stream().toList()) {
             AiServices<Assistant> builder = AiServices.builder(Assistant.class)
                     .streamingChatModel(streamingModel)
-                    .systemMessageProvider(memoryId -> spec.systemPrompt())
+                    .systemMessageProvider(memoryId -> spec.promptFor(memoryId))
                     .chatMemoryProvider(memoryId -> MessageWindowChatMemory.builder()
                             .id(memoryId)
                             .maxMessages(llmProperties.getMaxMessages())
