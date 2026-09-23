@@ -6,6 +6,7 @@ import ChatWindow from '../components/ChatWindow.vue'
   <ChatWindow
     base-path="/bank"
     agent="bank"
+    theme="theme-bank"
     enable-identity
     title="银行助手「小银」"
     bot-name="小银"

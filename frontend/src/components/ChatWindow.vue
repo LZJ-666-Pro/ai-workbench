@@ -26,6 +26,8 @@ const props = withDefaults(defineProps<{
   suggestions?: Suggestion[]
   /** 启用多服务对象身份切换（银行助手专属：零售客户/内部员工/对公客户） */
   enableIdentity?: boolean
+  /** 主题类名（如 theme-bank 企业银行主题），加在组件根元素上，不传用默认主题 */
+  theme?: string
 }>(), {
   placeholder: '输入消息，回车发送…',
 })
@@ -375,7 +377,7 @@ function formatTime(timestamp: string): string {
 </script>
 
 <template>
-  <div class="chat-container">
+  <div class="chat-container" :class="theme || ''">
     <!-- 侧边栏：会话列表 -->
     <aside class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar-inner">
@@ -1410,5 +1412,183 @@ function formatTime(timestamp: string): string {
   text-align: center;
   font-size: 11px;
   color: #b3b9c4;
+}
+
+/* ===== 企业银行主题（theme="theme-bank"）=====
+   关键词：稳重、克制、可信。金融深蓝替代互联网紫，
+   浅灰蓝底 + 白卡片浮起，小圆角硬朗感。仅银行助手启用。 */
+.theme-bank {
+  --accent: #0b4f9e;
+  --accent-weak: #eaf1f9;
+  --border: #e5e8ec;
+  background: #f5f7fa;
+}
+
+/* 主区与输入区底色跟随浅灰蓝 */
+.theme-bank .chat-main {
+  background: #f5f7fa;
+}
+
+.theme-bank .composer-wrap {
+  background: linear-gradient(to top, #f5f7fa 70%, rgba(245, 247, 250, 0));
+}
+
+/* 侧栏：白底细分隔；"开启新对话"方角化、更稳重 */
+.theme-bank .sidebar {
+  border-right: 1px solid var(--border);
+}
+
+.theme-bank .new-chat {
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.theme-bank .new-chat:hover {
+  background: #09417f;
+}
+
+/* 顶栏：深蓝实底导航条，形成"系统框架" */
+.theme-bank .chat-topbar {
+  background: #0b4f9e;
+  border-bottom: none;
+}
+
+.theme-bank .chat-title {
+  color: #fff;
+  letter-spacing: 0.5px;
+}
+
+.theme-bank .online-dot {
+  background: #4ade80;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18);
+}
+
+.theme-bank .icon-btn {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.theme-bank .icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+/* 助手消息：白卡片浮起（业务反馈单的感觉），头像深蓝 */
+.theme-bank .msg-row.assistant .bubble {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 18px;
+  box-shadow: 0 1px 3px rgba(16, 42, 83, 0.06);
+}
+
+.theme-bank .avatar.assistant {
+  background: linear-gradient(135deg, #0b4f9e, #1667c1);
+  box-shadow: 0 3px 10px rgba(11, 79, 158, 0.25);
+}
+
+/* 用户消息：深蓝指令条，小圆角硬朗 */
+.theme-bank .msg-row.user .bubble {
+  border-radius: 6px;
+  border-top-right-radius: 2px;
+}
+
+/* 表格：银行流水质感——表头底色、极细行分隔、数字等宽对齐 */
+.theme-bank .bubble .md table {
+  font-size: 12.5px;
+}
+
+.theme-bank .bubble .md th,
+.theme-bank .bubble .md td {
+  border: none;
+  border-bottom: 1px solid #e8edf3;
+  padding: 7px 14px;
+}
+
+.theme-bank .bubble .md th {
+  background: #f0f4f8;
+  color: #33506e;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+}
+
+.theme-bank .bubble .md tr:last-child td {
+  border-bottom: none;
+}
+
+.theme-bank .bubble .md td {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.theme-bank .bubble .md th {
+  font-family: inherit;
+}
+
+.theme-bank .bubble .md code {
+  background: rgba(11, 79, 158, 0.08);
+}
+
+/* 欢迎屏：logo 深蓝渐变、建议卡方角 */
+.theme-bank .hero-logo {
+  border-radius: 14px;
+  background: linear-gradient(135deg, #0b4f9e, #1667c1);
+  box-shadow: 0 10px 28px rgba(11, 79, 158, 0.3);
+}
+
+.theme-bank .suggestion {
+  border-radius: 6px;
+}
+
+.theme-bank .suggestion:hover {
+  box-shadow: 0 4px 14px rgba(11, 79, 158, 0.12);
+}
+
+/* 转账确认卡片：方角 + 深蓝阴影 */
+.theme-bank .msg-row.card .bubble {
+  border-color: #cfe0f2;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(11, 79, 158, 0.08);
+}
+
+.theme-bank .card-amount {
+  font-variant-numeric: tabular-nums;
+}
+
+.theme-bank .card-actions .primary,
+.theme-bank .card-actions .ghost {
+  border-radius: 4px;
+}
+
+.theme-bank .card-actions .primary:hover {
+  background: #09417f;
+}
+
+/* 输入框：方角卡片 */
+.theme-bank .composer {
+  border-radius: 6px;
+  box-shadow: 0 2px 12px rgba(16, 42, 83, 0.06);
+}
+
+.theme-bank .composer:focus-within {
+  box-shadow: 0 2px 16px rgba(11, 79, 158, 0.12);
+}
+
+.theme-bank .send-btn {
+  border-radius: 4px;
+}
+
+.theme-bank .send-btn:hover:not(:disabled) {
+  background: #09417f;
+}
+
+/* 免责声明：浅灰横条 */
+.theme-bank .disclaimer {
+  max-width: none;
+  margin: 8px 0 0;
+  padding: 7px 16px;
+  background: #eef2f6;
+  border-top: 1px solid var(--border);
+  color: #98a2b0;
+  font-size: 11.5px;
 }
 </style>
