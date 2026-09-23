@@ -70,6 +70,14 @@ body {
   padding: 20px 16px 40px;
 }
 
+/* 聊天助手页：占满 topbar 以下的全部空间（DeepSeek/Kimi 式工作区） */
+.main.flush {
+  max-width: none;
+  padding: 0;
+  height: calc(100vh - 56px);
+  overflow: hidden;
+}
+
 button {
   font: inherit;
   border: 0;

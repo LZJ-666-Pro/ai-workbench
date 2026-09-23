@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages } from '../api/chat'
 import type { ConfirmRequestData } from '../api/chat'
+
+export interface Suggestion {
+  icon: string
+  label: string
+}
 
 const props = withDefaults(defineProps<{
   /** 后端代理前缀：/bank | /knowledge | /interview */
@@ -11,6 +16,12 @@ const props = withDefaults(defineProps<{
   title: string
   welcome: string
   placeholder?: string
+  /** 助手名（欢迎屏大标题用，如「小银」） */
+  botName?: string
+  /** 欢迎屏副标题 */
+  botTagline?: string
+  /** 欢迎屏建议问题（点击直接发送） */
+  suggestions?: Suggestion[]
 }>(), {
   placeholder: '输入消息，回车发送…',
 })
@@ -40,21 +51,24 @@ interface SidebarSession {
 const input = ref('')
 const streaming = ref(false)
 const listEl = ref<HTMLElement | null>(null)
+const textareaEl = ref<HTMLTextAreaElement | null>(null)
 const sidebarOpen = ref(true)
-const sidebarCollapsed = ref(false)
 const sessions = ref<SidebarSession[]>([])
 const loadingSessions = ref(false)
 const messages = ref<Msg[]>([])
 let memoryId = ''
 let controller: AbortController | null = null
 
+/** 没有任何消息时显示欢迎屏（DeepSeek/Kimi 风格空状态） */
+const showHero = computed(() => messages.value.length === 0 && !streaming.value)
+
+const heroName = computed(() => props.botName ?? props.title)
+
 onMounted(async () => {
   memoryId = getMemoryId(props.agent)
-  // 欢迎语置顶，随后按时间序恢复该会话的历史消息（刷新/重进页面不丢聊天记录）
-  messages.value.push({ role: 'assistant', kind: 'text', content: props.welcome })
+  // 按时间序恢复该会话的历史消息（刷新/重进页面不丢聊天记录）
   const history = await loadHistoryMessages(props.basePath, props.agent, memoryId)
   history.forEach((h: any) => messages.value.push({ role: h.role, kind: 'text', content: h.content }))
-  // 加载会话列表
   await loadSessions()
   scrollBottom()
 })
@@ -65,11 +79,10 @@ async function loadSessions() {
   loadingSessions.value = true
   try {
     const apiSessions = await listSessions(props.basePath, props.agent)
-    // 过滤掉空白会话
     sessions.value = apiSessions
       .map((s: any) => ({
         ...s,
-        label: `会话 ${s.memoryId.substring(0, 8)}`
+        label: `会话 ${s.memoryId.substring(0, 8)}`,
       }))
       .sort((a, b) => b.lastTime.localeCompare(a.lastTime))
   } catch (e) {
@@ -83,10 +96,7 @@ async function switchSession(sessionId: string) {
   if (loadingSessions.value || memoryId === sessionId) return
   memoryId = sessionId
   const history = await loadHistoryMessages(props.basePath, props.agent, memoryId)
-  // 保留欢迎语，追加历史消息
-  const welcome = messages.value.find(m => m.kind === 'text' && m.role === 'assistant' && m.content === props.welcome)
-  messages.value = [welcome || { role: 'assistant', kind: 'text', content: props.welcome }]
-  history.forEach(h => messages.value.push({ role: h.role, kind: 'text', content: h.content }))
+  messages.value = history.map(h => ({ role: h.role, kind: 'text', content: h.content }))
   // 更新列表顺序（把选中的移到最前）
   const idx = sessions.value.findIndex(s => s.memoryId === sessionId)
   if (idx >= 0) {
@@ -98,23 +108,27 @@ async function switchSession(sessionId: string) {
 
 function newSession() {
   memoryId = newMemoryId(props.agent)
-  messages.value = [{ role: 'assistant', kind: 'text', content: props.welcome }]
-  // 清空会话列表，显示"暂无历史会话"
-  sessions.value = []
-  // 收起侧边栏（如果是新建会话）
-  sidebarOpen.value = false
+  messages.value = []
+  loadSessions()
   scrollBottom()
 }
 
 function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
-  sidebarCollapsed.value = !sidebarOpen.value
+}
+
+/** 点击建议问题：直接发送 */
+async function sendSuggestion(s: Suggestion) {
+  if (streaming.value) return
+  input.value = s.label
+  await send()
 }
 
 async function send() {
   const message = input.value.trim()
   if (!message || streaming.value) return
   input.value = ''
+  resetTextareaHeight()
   messages.value.push({ role: 'user', kind: 'text', content: message })
 
   // 从响应式数组里取代理对象，流式追加才会触发视图更新
@@ -173,6 +187,20 @@ function scrollBottom() {
   nextTick(() => listEl.value?.scrollTo({ top: listEl.value.scrollHeight }))
 }
 
+/** textarea 自适应高度（1 行起，最多约 6 行） */
+function autoResize() {
+  const el = textareaEl.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+}
+
+function resetTextareaHeight() {
+  nextTick(() => {
+    if (textareaEl.value) textareaEl.value.style.height = 'auto'
+  })
+}
+
 /** 格式化时间（只显示 MM-DD HH:mm） */
 function formatTime(timestamp: string): string {
   if (!timestamp) return ''
@@ -187,108 +215,138 @@ function formatTime(timestamp: string): string {
 
 <template>
   <div class="chat-container">
-    <!-- 侧边栏会话列表 -->
-    <aside v-if="sidebarOpen" class="sidebar" ref="sidebarEl">
-      <!-- 侧边栏头部 -->
-      <div class="sidebar-header">
-        <div class="sidebar-title">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-          </svg>
-          <span>会话历史（{{ sessions.length }}）</span>
-        </div>
-        <button class="new-chat-btn" @click="newSession" title="新建会话">
+    <!-- 侧边栏：会话列表 -->
+    <aside class="sidebar" :class="{ open: sidebarOpen }">
+      <div class="sidebar-inner">
+        <button class="new-chat" @click="newSession">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <path d="M12 5v14M5 12h14" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M12 5v14M5 12h14" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
+          开启新对话
         </button>
-      </div>
 
-      <!-- 会话列表 -->
-      <div v-if="loadingSessions" class="loading">加载中…</div>
-      <div v-else-if="sessions.length === 0" class="empty">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-        </svg>
-        <p>暂无历史会话</p>
-        <p class="hint">开始新对话后，历史记录会显示在这里</p>
-      </div>
-      <div
-        v-else
-        v-for="session in sessions"
-        :key="session.memoryId"
-        class="session-item"
-        :class="{ active: session.memoryId === memoryId }"
-        @click="switchSession(session.memoryId)"
-      >
-        <div class="session-info">
+        <div class="sidebar-caption">历史会话</div>
+
+        <div v-if="loadingSessions" class="loading">加载中…</div>
+        <div v-else-if="sessions.length === 0" class="empty">
+          <p>暂无历史会话</p>
+          <p class="hint">开始新对话后，记录会显示在这里</p>
+        </div>
+        <div
+          v-else
+          v-for="session in sessions"
+          :key="session.memoryId"
+          class="session-item"
+          :class="{ active: session.memoryId === memoryId }"
+          @click="switchSession(session.memoryId)"
+        >
           <span class="session-label">{{ session.label }}</span>
           <span class="session-time">{{ formatTime(session.lastTime) }}</span>
         </div>
       </div>
+
+      <div class="sidebar-footer">
+        <span class="footer-logo">🏦</span>
+        <span>AI Workbench · 银行助手</span>
+      </div>
     </aside>
 
     <!-- 主聊天区域 -->
-    <main class="chat-main" :class="{ expanded: sidebarCollapsed && sidebarOpen }">
-      <!-- 顶部工具栏 -->
-      <div class="chat-toolbar">
-        <button class="icon-btn" :disabled="loadingSessions" @click="toggleSidebar" title="切换侧边栏">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" stroke-linejoin="round"/>
+    <main class="chat-main">
+      <!-- 顶栏 -->
+      <header class="chat-topbar">
+        <button class="icon-btn" :disabled="loadingSessions" @click="toggleSidebar" title="收起/展开侧栏">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
           </svg>
         </button>
         <h2 class="chat-title">{{ title }}</h2>
-      </div>
+      </header>
 
-      <!-- 聊天消息列表 -->
-      <div class="chat-body" ref="listEl">
-        <div
-          v-for="(m, i) in messages"
-          :key="i"
-          class="msg"
-          :class="[m.role, { card: m.kind === 'card' }]"
-        >
-          <template v-if="m.kind === 'card' && m.card">
-            <div class="card-title">💸 待确认转账</div>
-            <div class="card-row">收款：{{ m.card.toOwner }}（{{ m.card.toAccount }}）</div>
-            <div class="card-row">金额：<b>¥{{ m.card.amount.toFixed(2) }}</b></div>
-            <div v-if="m.card.reason" class="card-row">附言：{{ m.card.reason }}</div>
-            <div class="card-row">付款：{{ m.card.fromAccount }}</div>
-            <div v-if="m.card.status === 'pending'" class="card-actions">
-              <button class="primary" @click="respondCard(m.card, 'confirm')">确认转账</button>
-              <button class="ghost" @click="respondCard(m.card, 'cancel')">取消</button>
+      <!-- 消息滚动区 -->
+      <div class="chat-scroll" ref="listEl">
+        <!-- 欢迎屏：无消息时居中展示 -->
+        <div v-if="showHero" class="hero">
+          <div class="hero-logo">🏦</div>
+          <h1 class="hero-title">你好，我是{{ heroName }}</h1>
+          <p class="hero-tagline">{{ props.botTagline ?? welcome }}</p>
+          <div v-if="suggestions?.length" class="suggestions">
+            <button
+              v-for="s in suggestions"
+              :key="s.label"
+              class="suggestion"
+              @click="sendSuggestion(s)"
+            >
+              <span class="s-icon">{{ s.icon }}</span>
+              <span>{{ s.label }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 消息流 -->
+        <div v-else class="msg-list">
+          <div
+            v-for="(m, i) in messages"
+            :key="i"
+            class="msg-row"
+            :class="[m.role, { card: m.kind === 'card' }]"
+          >
+            <div class="avatar" :class="m.role">
+              <template v-if="m.role === 'assistant'">🏦</template>
+              <template v-else>我</template>
             </div>
-            <div v-else-if="m.card.status === 'processing'" class="card-status">处理中…</div>
-            <div v-else-if="m.card.status === 'confirmed'" class="card-status ok">✅ 已确认</div>
-            <div v-else class="card-status">🚫 已取消</div>
-          </template>
-          <template v-else>
-            {{ m.content }}<template
-              v-if="streaming && m.role === 'assistant' && i === messages.length - 1"
-            ><span v-if="!m.content" class="thinking">思考中…</span><span
-                v-else
-                class="caret"
-              >▍</span></template>
-          </template>
+            <div class="bubble">
+              <template v-if="m.kind === 'card' && m.card">
+                <div class="card-head">
+                  <span class="card-icon">💸</span>
+                  <span>待确认转账</span>
+                </div>
+                <div class="card-amount">¥{{ m.card.amount.toFixed(2) }}</div>
+                <div class="card-row"><span class="k">收款人</span><span>{{ m.card.toOwner }}（{{ m.card.toAccount }}）</span></div>
+                <div class="card-row"><span class="k">付款账户</span><span>{{ m.card.fromAccount }}</span></div>
+                <div v-if="m.card.reason" class="card-row"><span class="k">附言</span><span>{{ m.card.reason }}</span></div>
+                <div v-if="m.card.status === 'pending'" class="card-actions">
+                  <button class="primary" @click="respondCard(m.card, 'confirm')">确认转账</button>
+                  <button class="ghost" @click="respondCard(m.card, 'cancel')">取消</button>
+                </div>
+                <div v-else-if="m.card.status === 'processing'" class="card-status">处理中…</div>
+                <div v-else-if="m.card.status === 'confirmed'" class="card-status ok">✅ 已确认</div>
+                <div v-else class="card-status">🚫 已取消</div>
+              </template>
+              <template v-else>
+                {{ m.content }}<template
+                  v-if="streaming && m.role === 'assistant' && i === messages.length - 1"
+                ><span v-if="!m.content" class="thinking">思考中…</span><span
+                    v-else
+                    class="caret"
+                  >▍</span></template>
+              </template>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- 输入区域 -->
-      <div class="chat-input">
-        <div class="input-wrapper">
-          <input
+      <!-- 输入区 -->
+      <div class="composer-wrap">
+        <div class="composer">
+          <textarea
+            ref="textareaEl"
             v-model="input"
+            rows="1"
             :placeholder="placeholder"
             :disabled="streaming"
-            @keydown.enter="send"
-          >
-          <button :disabled="streaming" @click="send">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"></line>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            @keydown.enter.exact.prevent="send"
+            @input="autoResize"
+          ></textarea>
+          <button class="send-btn" :disabled="streaming || !input.trim()" @click="send" title="发送">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
             </svg>
           </button>
         </div>
+        <p class="disclaimer">内容由 AI 生成，仅供参考 · 转账操作需二次确认</p>
       </div>
     </main>
   </div>
@@ -298,120 +356,112 @@ function formatTime(timestamp: string): string {
 .chat-container {
   display: flex;
   height: 100%;
-  background: var(--bg);
+  background: #fff;
+  overflow: hidden;
 }
 
-/* 侧边栏 */
+/* ===== 侧边栏 ===== */
 .sidebar {
-  width: 280px;
-  background: var(--bg);
-  border-right: 1px solid var(--border);
+  width: 0;
+  flex-shrink: 0;
+  background: #f7f8fa;
   display: flex;
   flex-direction: column;
-  transition: width 0.3s ease;
+  transition: width 0.25s ease;
+  overflow: hidden;
 }
 
-.sidebar-header {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+.sidebar.open {
+  width: 264px;
+}
+
+.sidebar-inner {
+  width: 264px;
+  flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  padding: 16px 12px 8px;
+  min-height: 0;
 }
 
-.sidebar-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.sidebar-title svg {
-  color: var(--accent);
-}
-
-.new-chat-btn {
-  width: 32px;
-  height: 32px;
+.new-chat {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
-  color: var(--text);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.new-chat-btn:hover {
+  gap: 8px;
+  width: 100%;
+  padding: 11px 0;
+  border-radius: 10px;
   background: var(--accent);
-  border-color: var(--accent);
   color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
 }
 
-.new-chat-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.new-chat:hover {
+  background: #3d5ce0;
+}
+
+.sidebar-caption {
+  margin: 20px 6px 8px;
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 .loading {
-  padding: 40px 20px;
+  padding: 24px 12px;
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-size: 13px;
 }
 
 .empty {
-  padding: 40px 20px;
+  padding: 28px 12px;
   text-align: center;
-  color: var(--text-muted);
-}
-
-.empty svg {
-  color: var(--border);
-  margin-bottom: 12px;
+  color: var(--text-dim);
+  font-size: 13px;
 }
 
 .empty p {
-  margin: 4px 0;
-  font-size: 13px;
+  margin: 2px 0;
 }
 
 .empty .hint {
   font-size: 12px;
-  opacity: 0.7;
+  opacity: 0.75;
 }
 
 .session-item {
-  padding: 12px 16px;
-  cursor: pointer;
-  border-bottom: 1px solid var(--border);
-  transition: all 0.2s;
-}
-
-.session-item:hover {
-  background: var(--card);
-}
-
-.session-item.active {
-  background: var(--accent);
-}
-
-.session-info {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-bottom: 2px;
+}
+
+.session-item:hover {
+  background: #eceef2;
+}
+
+.session-item.active {
+  background: var(--accent-weak);
+}
+
+.session-item.active .session-label {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .session-label {
   flex: 1;
   font-size: 13px;
   color: var(--text);
-  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -419,48 +469,60 @@ function formatTime(timestamp: string): string {
 
 .session-time {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-dim);
   white-space: nowrap;
 }
 
-/* 主聊天区域 */
+.sidebar-footer {
+  width: 264px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+}
+
+.footer-logo {
+  font-size: 14px;
+}
+
+/* ===== 主区域 ===== */
 .chat-main {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  transition: flex 0.3s ease;
+  background: #fff;
 }
 
-.chat-main.expanded {
-  flex: 1;
-}
-
-.chat-toolbar {
+.chat-topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--card);
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #f0f1f4;
+  background: #fff;
 }
 
 .icon-btn {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 8px;
-  background: var(--card);
-  color: var(--text);
+  background: transparent;
+  color: var(--text-dim);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.15s;
 }
 
 .icon-btn:hover:not(:disabled) {
-  background: var(--bg);
+  background: #f0f1f4;
+  color: var(--text);
 }
 
 .icon-btn:disabled {
@@ -470,7 +532,7 @@ function formatTime(timestamp: string): string {
 
 .chat-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
   overflow: hidden;
@@ -478,103 +540,263 @@ function formatTime(timestamp: string): string {
   white-space: nowrap;
 }
 
-/* 聊天消息列表 */
-.chat-body {
+/* ===== 消息滚动区 ===== */
+.chat-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
   min-height: 0;
 }
 
-.msg {
-  max-width: 85%;
-  padding: 10px 14px;
-  border-radius: 10px;
-  line-height: 1.65;
+/* 欢迎屏 */
+.hero {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.hero-logo {
+  width: 68px;
+  height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, var(--accent), #7c9bff);
+  box-shadow: 0 10px 28px rgba(79, 110, 242, 0.35);
+  margin-bottom: 22px;
+}
+
+.hero-title {
+  margin: 0 0 10px;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+
+.hero-tagline {
+  margin: 0 0 34px;
+  font-size: 14px;
+  color: var(--text-dim);
+  max-width: 460px;
+  line-height: 1.7;
+}
+
+.suggestions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+  max-width: 640px;
+}
+
+.suggestion {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 13.5px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.18s;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.suggestion span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suggestion:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 14px rgba(79, 110, 242, 0.12);
+  transform: translateY(-1px);
+}
+
+.s-icon {
+  font-size: 17px;
+}
+
+/* 消息流 */
+.msg-list {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 24px 20px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.msg-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.msg-row.user {
+  flex-direction: row-reverse;
+}
+
+.avatar {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 15px;
+}
+
+.avatar.assistant {
+  background: linear-gradient(135deg, var(--accent), #7c9bff);
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(79, 110, 242, 0.25);
+}
+
+.avatar.user {
+  background: #e8ebf2;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.bubble {
+  max-width: 78%;
+  padding: 11px 15px;
+  border-radius: 16px;
+  line-height: 1.7;
+  font-size: 14.5px;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.msg.user {
-  align-self: flex-end;
+.msg-row.user .bubble {
   background: var(--accent);
   color: #fff;
+  border-top-right-radius: 5px;
 }
 
-.msg.assistant {
-  align-self: flex-start;
-  background: var(--card);
-  border: 1px solid var(--border);
-}
-
-/* 确认卡片：比普通消息更醒目 */
-.msg.card {
-  min-width: 260px;
-  border: 1px solid var(--accent);
-  background: var(--card);
-}
-
-.card-title {
-  font-weight: 600;
-  margin-bottom: 6px;
+.msg-row.assistant .bubble {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  background: transparent;
   color: var(--text);
+  padding: 2px 4px;
+  border-radius: 0;
+}
+
+.msg-row.assistant .caret {
+  color: var(--accent);
+}
+
+/* 确认卡片：AI 全宽内容区里的浮卡 */
+.msg-row.card .bubble {
+  flex: 0 1 auto;
+  width: 400px;
+  max-width: 100%;
+  background: #fff;
+  border: 1px solid #dbe3f8;
+  box-shadow: 0 6px 20px rgba(79, 110, 242, 0.1);
+  border-radius: 16px;
+  padding: 16px 18px;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.card-icon {
+  font-size: 16px;
+}
+
+.card-amount {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--accent);
+  margin: 12px 0 10px;
+  letter-spacing: 0.3px;
 }
 
 .card-row {
-  font-size: 14px;
-  color: var(--text);
-  margin: 4px 0;
+  display: flex;
+  gap: 14px;
+  font-size: 13.5px;
+  margin: 6px 0;
+}
+
+.card-row .k {
+  color: var(--text-dim);
+  flex-shrink: 0;
+  width: 56px;
 }
 
 .card-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .card-actions .primary {
   background: var(--accent);
   color: #fff;
   border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 13px;
+  padding: 9px 20px;
+  border-radius: 9px;
+  font-size: 13.5px;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: background 0.2s;
 }
 
 .card-actions .primary:hover {
-  opacity: 0.9;
+  background: #3d5ce0;
 }
 
 .card-actions .ghost {
-  background: var(--bg);
+  background: #fff;
   border: 1px solid var(--border);
-  color: var(--text);
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 13px;
+  color: var(--text-dim);
+  padding: 9px 20px;
+  border-radius: 9px;
+  font-size: 13.5px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .card-actions .ghost:hover {
-  border-color: var(--text-muted);
+  border-color: var(--text-dim);
+  color: var(--text);
 }
 
 .card-status {
-  margin-top: 12px;
+  margin-top: 14px;
   font-size: 13px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  background: var(--bg);
+  padding: 9px 13px;
+  border-radius: 8px;
+  background: #f4f6f9;
 }
 
 .card-status.ok {
-  color: var(--accent);
+  color: #16a34a;
+  background: #f0fdf4;
 }
 
 .caret {
@@ -600,67 +822,86 @@ function formatTime(timestamp: string): string {
   }
 }
 
-/* 输入区域 */
-.chat-input {
-  padding: 20px;
-  border-top: 1px solid var(--border);
-  background: var(--card);
+/* ===== 输入区 ===== */
+.composer-wrap {
+  padding: 12px 20px 14px;
+  background: linear-gradient(to top, #fff 70%, rgba(255, 255, 255, 0));
 }
 
-.input-wrapper {
+.composer {
   display: flex;
-  gap: 12px;
-  max-width: 800px;
+  align-items: flex-end;
+  gap: 10px;
+  max-width: 820px;
   margin: 0 auto;
-  background: var(--bg);
+  background: #fff;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 8px;
-  transition: border-color 0.2s;
+  border-radius: 24px;
+  padding: 9px 9px 9px 18px;
+  box-shadow: 0 4px 24px rgba(31, 35, 41, 0.06);
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.input-wrapper:focus-within {
+.composer:focus-within {
   border-color: var(--accent);
+  box-shadow: 0 4px 28px rgba(79, 110, 242, 0.16);
 }
 
-.input-wrapper input {
+.composer textarea {
   flex: 1;
   border: none;
   background: transparent;
-  font-size: 14px;
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.6;
   color: var(--text);
-  padding: 8px 12px;
-}
-
-.input-wrapper input:focus {
+  padding: 7px 0;
+  resize: none;
   outline: none;
+  max-height: 160px;
 }
 
-.input-wrapper input:disabled {
+.composer textarea::placeholder {
+  color: #b3b9c4;
+}
+
+.composer textarea:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-.input-wrapper button {
-  width: 36px;
-  height: 36px;
+.send-btn {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 8px;
-  background: var(--accent);
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), #7c9bff);
   color: #fff;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: all 0.2s;
+  box-shadow: 0 3px 10px rgba(79, 110, 242, 0.3);
 }
 
-.input-wrapper button:disabled {
-  opacity: 0.5;
+.send-btn:hover:not(:disabled) {
+  transform: scale(1.05);
+}
+
+.send-btn:disabled {
+  background: #dfe3ea;
+  color: #aab0bb;
+  box-shadow: none;
   cursor: not-allowed;
 }
 
-.input-wrapper button:hover:not(:disabled) {
-  opacity: 0.9;
+.disclaimer {
+  max-width: 820px;
+  margin: 8px auto 0;
+  text-align: center;
+  font-size: 11px;
+  color: #b3b9c4;
 }
 </style>

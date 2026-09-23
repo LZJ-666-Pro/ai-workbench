@@ -1,4 +1,12 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+
+const route = useRoute()
+/** 三个助手页是全屏聊天工作区，不走 .main 的限宽布局 */
+const isChatRoute = computed(() =>
+  ['/bank', '/knowledge', '/interview'].some(p => route.path.startsWith(p)),
+)
 </script>
 
 <template>
@@ -10,7 +18,7 @@
       <RouterLink to="/interview">🎤 面试模拟</RouterLink>
     </nav>
   </header>
-  <main class="main">
+  <main class="main" :class="{ flush: isChatRoute }">
     <RouterView />
   </main>
 </template>
