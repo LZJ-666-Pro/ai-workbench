@@ -47,6 +47,7 @@ public final class AdminDtos {
     public record OrderView(
             long id,
             String confirmId,
+            String memoryId,
             String fromAccount,
             String toAccount,
             BigDecimal amount,
@@ -63,6 +64,73 @@ public final class AdminDtos {
             String detail,
             String result,
             String createdAt) {
+    }
+
+    // ---------- 客户 360 视图 ----------
+
+    /** 客户列表行：按户名聚合名下账户 */
+    public record CustomerView(
+            String owner,
+            long accountCount,
+            BigDecimal totalBalance,
+            String type, // personal / corporate / mixed
+            List<AccountBrief> accounts) {
+    }
+
+    /** 客户名下账户摘要 */
+    public record AccountBrief(String owner, String accountNo, BigDecimal balance) {
+    }
+
+    /** 客户 360 视图全景：基本信息 + 存贷款口径统计 + 业务轨迹 */
+    public record CustomerProfile(
+            String owner,
+            String type,
+            List<AccountBrief> accounts,
+            BigDecimal totalBalance,
+            long txnCount,
+            BigDecimal txnIncome,
+            BigDecimal txnExpense,
+            long orderCount,
+            long orderExecuted,
+            BigDecimal orderAmount,
+            long auditCount,
+            List<TxnView> recentTxns,
+            List<OrderView> recentOrders,
+            List<AuditLogView> recentAudits) {
+    }
+
+    // ---------- 审批中心 ----------
+
+    /** 审批中心统计 + 待审批队列 */
+    public record ApprovalBoard(
+            long pending,
+            long executedToday,
+            long cancelled,
+            long rejected,
+            List<OrderView> pendingOrders) {
+    }
+
+    /** 交易旅程：一笔订单从创建到落地的完整轨迹 */
+    public record OrderJourney(
+            OrderView order,
+            List<JourneyNode> timeline) {
+    }
+
+    /** 旅程节点 */
+    public record JourneyNode(String time, String type, String text, String result) {
+    }
+
+    // ---------- 交易限额 ----------
+
+    /** 限额包：服务对象身份 × 交易额度 */
+    public record LimitPackage(
+            String identityId,
+            String displayName,
+            String role,
+            String boundAccount,
+            boolean canTransfer,
+            String maxSingle,
+            String maxDaily) {
     }
 
     /** 饼图数据点：账户余额分布 */

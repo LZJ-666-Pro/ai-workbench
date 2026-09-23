@@ -37,6 +37,7 @@ export interface TxnView {
 export interface OrderView {
   id: number
   confirmId: string
+  memoryId: string
   fromAccount: string
   toAccount: string
   amount: number
@@ -66,6 +67,73 @@ export interface DailyFlowPoint {
   expense: number
 }
 
+// ---------- 客户 360 ----------
+
+export interface AccountBrief {
+  owner: string
+  accountNo: string
+  balance: number
+}
+
+export interface CustomerView {
+  owner: string
+  accountCount: number
+  totalBalance: number
+  type: 'personal' | 'corporate' | 'mixed'
+  accounts: AccountBrief[]
+}
+
+export interface CustomerProfile {
+  owner: string
+  type: 'personal' | 'corporate'
+  accounts: AccountBrief[]
+  totalBalance: number
+  txnCount: number
+  txnIncome: number
+  txnExpense: number
+  orderCount: number
+  orderExecuted: number
+  orderAmount: number
+  auditCount: number
+  recentTxns: TxnView[]
+  recentOrders: OrderView[]
+  recentAudits: AuditLogView[]
+}
+
+// ---------- 审批中心 ----------
+
+export interface ApprovalBoard {
+  pending: number
+  executedToday: number
+  cancelled: number
+  rejected: number
+  pendingOrders: OrderView[]
+}
+
+export interface JourneyNode {
+  time: string
+  type: string
+  text: string
+  result: string
+}
+
+export interface OrderJourney {
+  order: OrderView
+  timeline: JourneyNode[]
+}
+
+// ---------- 交易限额 ----------
+
+export interface LimitPackage {
+  identityId: string
+  displayName: string
+  role: string
+  boundAccount: string
+  canTransfer: boolean
+  maxSingle: string
+  maxDaily: string
+}
+
 async function get<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
   const qs = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) {
@@ -93,4 +161,12 @@ export const adminApi = {
     get<PageResult<AuditLogView>>('/audit-logs', { result, toolName, page, size }),
   balanceDistribution: () => get<BalancePoint[]>('/stats/balance-distribution'),
   dailyFlow: (days: number) => get<DailyFlowPoint[]>('/stats/daily-flow', { days }),
+  // 客户 360
+  customers: () => get<CustomerView[]>('/customers'),
+  customerProfile: (owner: string) => get<CustomerProfile>(`/customers/${encodeURIComponent(owner)}/profile`),
+  // 审批中心
+  approvals: () => get<ApprovalBoard>('/approvals'),
+  orderJourney: (id: number) => get<OrderJourney>(`/transfer-orders/${id}/journey`),
+  // 交易限额
+  limits: () => get<LimitPackage[]>('/limits'),
 }

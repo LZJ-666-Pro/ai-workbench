@@ -2,6 +2,7 @@ package com.ai.workbench.bank.api;
 
 import java.util.List;
 
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -81,5 +82,43 @@ public class BankAdminController {
     @GetMapping("/stats/daily-flow")
     public List<AdminDtos.DailyFlowPoint> dailyFlow(@RequestParam(defaultValue = "7") int days) {
         return query.dailyFlow(days);
+    }
+
+    // ==================== 客户 360 视图 ====================
+
+    /** 客户列表（按户名聚合名下账户） */
+    @GetMapping("/customers")
+    public List<AdminDtos.CustomerView> customers() {
+        return query.customers();
+    }
+
+    /** 客户 360 全景 */
+    @GetMapping("/customers/{owner}/profile")
+    public ResponseEntity<AdminDtos.CustomerProfile> customerProfile(@PathVariable String owner) {
+        AdminDtos.CustomerProfile profile = query.customerProfile(owner);
+        return profile == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(profile);
+    }
+
+    // ==================== 审批中心 ====================
+
+    /** 审批看板：统计 + 待审批队列 */
+    @GetMapping("/approvals")
+    public AdminDtos.ApprovalBoard approvals() {
+        return query.approvalBoard();
+    }
+
+    /** 交易旅程：一笔订单从创建到落地的完整轨迹 */
+    @GetMapping("/transfer-orders/{id}/journey")
+    public ResponseEntity<AdminDtos.OrderJourney> orderJourney(@PathVariable long id) {
+        AdminDtos.OrderJourney journey = query.orderJourney(id);
+        return journey == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(journey);
+    }
+
+    // ==================== 交易限额 ====================
+
+    /** 限额包：各服务对象身份的当前生效限额（代码层风控规则） */
+    @GetMapping("/limits")
+    public List<AdminDtos.LimitPackage> limits() {
+        return query.limitPackages();
     }
 }
