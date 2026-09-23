@@ -75,14 +75,30 @@ onMounted(async () => {
 
 onBeforeUnmount(() => controller?.abort())
 
+/** 会话标题摘要（存 localStorage，DB 只存 memoryId） */
+function loadLabelMap(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(`aiwb-labels-${props.agent}`) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function saveLabel(label: string) {
+  const m = loadLabelMap()
+  m[memoryId] = label
+  localStorage.setItem(`aiwb-labels-${props.agent}`, JSON.stringify(m))
+}
+
 async function loadSessions() {
   loadingSessions.value = true
   try {
+    const labels = loadLabelMap()
     const apiSessions = await listSessions(props.basePath, props.agent)
     sessions.value = apiSessions
       .map((s: any) => ({
         ...s,
-        label: `会话 ${s.memoryId.substring(0, 8)}`,
+        label: labels[s.memoryId] || `会话 ${s.memoryId.substring(0, 8)}`,
       }))
       .sort((a, b) => b.lastTime.localeCompare(a.lastTime))
   } catch (e) {
@@ -109,7 +125,9 @@ async function switchSession(sessionId: string) {
 function newSession() {
   memoryId = newMemoryId(props.agent)
   messages.value = []
-  loadSessions()
+  // 立即在侧栏顶部出现"新对话"记录（此刻还未落库，不查 DB 以免把它冲掉）
+  sessions.value = sessions.value.filter(s => s.label !== '新对话')
+  sessions.value.unshift({ memoryId, label: '新对话', lastTime: new Date().toISOString() })
   scrollBottom()
 }
 
@@ -130,6 +148,14 @@ async function send() {
   input.value = ''
   resetTextareaHeight()
   messages.value.push({ role: 'user', kind: 'text', content: message })
+
+  // 首条消息后把"新对话"更新为消息摘要（并持久化，刷新后标题不丢）
+  const item = sessions.value.find(s => s.memoryId === memoryId)
+  if (item) {
+    item.label = message.slice(0, 12)
+    item.lastTime = new Date().toISOString()
+    saveLabel(item.label)
+  }
 
   // 从响应式数组里取代理对象，流式追加才会触发视图更新
   messages.value.push({ role: 'assistant', kind: 'text', content: '' })

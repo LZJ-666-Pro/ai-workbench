@@ -124,15 +124,16 @@ export async function listSessions(basePath: string, agent: string): Promise<Ses
 export function getMemoryId(agent: string): string {
   const key = `aiwb-current-${agent}`
   let id = localStorage.getItem(key)
-  if (!id) {
+  // 后端按 `${agent}:` 前缀查询会话列表，旧版裸 UUID 一律作废重建
+  if (!id || !id.startsWith(`${agent}:`)) {
     id = newMemoryId(agent)
   }
   return id
 }
 
-/** 新开一个会话（后端按 memoryId 隔离上下文） */
+/** 新开一个会话（后端按 memoryId 隔离上下文，带 agent 前缀供会话列表查询） */
 export function newMemoryId(agent: string): string {
-  const id = crypto.randomUUID()
+  const id = `${agent}:${crypto.randomUUID()}`
   localStorage.setItem(`aiwb-current-${agent}`, id)
   return id
 }
