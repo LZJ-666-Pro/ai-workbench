@@ -15,6 +15,8 @@ export interface OverviewStats {
   customerCount: number
   todayTxnCount: number
   todayTxnAmount: number
+  yesterdayTxnCount: number
+  yesterdayTxnAmount: number
 }
 
 export interface AccountView {
@@ -134,6 +136,13 @@ export interface LimitPackage {
   maxDaily: string
 }
 
+/** 管理端审批操作结果 */
+export interface AdminDecision {
+  id: number
+  status: string
+  message: string
+}
+
 async function get<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
   const qs = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) {
@@ -141,6 +150,14 @@ async function get<T>(path: string, params: Record<string, string | number | und
   }
   const q = qs.toString()
   const resp = await fetch(`/bank/api/admin${path}${q ? `?${q}` : ''}`)
+  if (!resp.ok) {
+    throw new Error(`请求失败: HTTP ${resp.status}`)
+  }
+  return await resp.json() as T
+}
+
+async function post<T>(path: string): Promise<T> {
+  const resp = await fetch(`/bank/api/admin${path}`, { method: 'POST' })
   if (!resp.ok) {
     throw new Error(`请求失败: HTTP ${resp.status}`)
   }
@@ -167,6 +184,8 @@ export const adminApi = {
   // 审批中心
   approvals: () => get<ApprovalBoard>('/approvals'),
   orderJourney: (id: number) => get<OrderJourney>(`/transfer-orders/${id}/journey`),
+  decideOrder: (id: number, approve: boolean) =>
+    post<AdminDecision>(`/transfer-orders/${id}/decision?approve=${approve}`),
   // 交易限额
   limits: () => get<LimitPackage[]>('/limits'),
 }

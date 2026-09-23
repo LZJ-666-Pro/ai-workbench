@@ -5,28 +5,52 @@
         <div class="admin-brand">🏦 智汇银行 · 管理后台</div>
         <el-menu :default-active="$route.fullPath" router background-color="#0e2a4d" text-color="#a8bcd4" active-text-color="#ffffff">
           <el-menu-item-group title="概览">
-            <el-menu-item index="/admin/dashboard">📊 仪表盘</el-menu-item>
+            <el-menu-item index="/admin/dashboard">
+              <el-icon><Odometer /></el-icon><span>仪表盘</span>
+            </el-menu-item>
           </el-menu-item-group>
           <el-menu-item-group title="客户与账户">
-            <el-menu-item index="/admin/customer-360">👤 客户管理</el-menu-item>
-            <el-menu-item index="/admin/customers">🗂 账户管理</el-menu-item>
+            <el-menu-item index="/admin/customer-360">
+              <el-icon><User /></el-icon><span>客户管理</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/customers">
+              <el-icon><Wallet /></el-icon><span>账户管理</span>
+            </el-menu-item>
           </el-menu-item-group>
           <el-menu-item-group title="业务运营">
-            <el-menu-item index="/admin/funds">💰 资金管理</el-menu-item>
-            <el-menu-item index="/admin/approvals">✅ 审批中心</el-menu-item>
+            <el-menu-item index="/admin/funds">
+              <el-icon><Money /></el-icon><span>资金管理</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/approvals">
+              <el-icon><DocumentChecked /></el-icon><span>审批中心</span>
+            </el-menu-item>
           </el-menu-item-group>
-          <el-menu-item-group title="风控与配置">
-            <el-menu-item index="/admin/limits">📏 交易限额</el-menu-item>
-            <el-menu-item index="/admin/config">🔑 用户与角色</el-menu-item>
-            <el-menu-item index="/admin/config?tab=security">🔒 安全认证</el-menu-item>
-            <el-menu-item index="/admin/config?tab=system">⚙ 系统参数</el-menu-item>
+          <el-menu-item-group title="风控与合规">
+            <el-menu-item index="/admin/limits">
+              <el-icon><CreditCard /></el-icon><span>交易限额</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/config">
+              <el-icon><Management /></el-icon><span>用户与角色</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/config?tab=security">
+              <el-icon><Lock /></el-icon><span>安全认证</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/config?tab=system">
+              <el-icon><Setting /></el-icon><span>系统参数</span>
+            </el-menu-item>
           </el-menu-item-group>
           <el-menu-item-group title="监控与审计">
-            <el-menu-item index="/admin/audit">🛡 AI 审计日志</el-menu-item>
+            <el-menu-item index="/admin/audit">
+              <el-icon><Document /></el-icon><span>审计日志</span>
+            </el-menu-item>
           </el-menu-item-group>
           <el-menu-item-group title="客户经理平台">
-            <el-menu-item index="/admin/marketing" disabled>📈 营销管理<span class="demo">演示</span></el-menu-item>
-            <el-menu-item index="/admin/visit" disabled>🚶 走访管理<span class="demo">演示</span></el-menu-item>
+            <el-menu-item index="/admin/marketing">
+              <el-icon><TrendCharts /></el-icon><span>营销管理</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/visit">
+              <el-icon><MapLocation /></el-icon><span>走访管理</span>
+            </el-menu-item>
           </el-menu-item-group>
         </el-menu>
       </el-aside>
@@ -37,8 +61,15 @@
   </div>
 </template>
 
+<script setup lang="ts">
+import {
+  Odometer, User, Wallet, Money, DocumentChecked, CreditCard,
+  Management, Lock, Setting, Document, TrendCharts, MapLocation,
+} from '@element-plus/icons-vue'
+</script>
+
 <style scoped>
-/* 作用域内覆盖 Element Plus 主色为企业蓝，不影响聊天页 */
+/* 作用域内覆盖 Element Plus 主色为企业蓝，并收敛卡片圆角，不影响聊天页 */
 .admin-layout {
   --el-color-primary: #0b4f9e;
   --el-color-primary-light-3: #3d7bc0;
@@ -47,6 +78,7 @@
   --el-color-primary-light-8: #d2e2f2;
   --el-color-primary-light-9: #e9f1f9;
   --el-color-primary-dark-2: #09417f;
+  --el-card-border-radius: 4px;
 }
 
 .admin-container {
@@ -82,21 +114,20 @@
   color: #5f7d9c;
 }
 
-.admin-aside :deep(.el-menu-item.is-disabled) {
-  opacity: 0.45;
+.admin-aside :deep(.el-menu-item) {
+  height: 44px;
+  line-height: 44px;
 }
 
-.demo {
-  margin-left: 6px;
-  font-size: 10px;
-  color: #5f7d9c;
-  border: 1px solid #33517a;
-  border-radius: 3px;
-  padding: 0 4px;
+.admin-aside :deep(.el-menu-item .el-icon) {
+  color: inherit;
+  margin-right: 8px;
 }
 
 .admin-main {
   padding: 16px 20px;
   overflow-y: auto;
+  /* 财务数字等宽对齐 */
+  font-variant-numeric: tabular-nums;
 }
 </style>

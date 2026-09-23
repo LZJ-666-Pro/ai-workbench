@@ -13,7 +13,7 @@ public final class AdminDtos {
     public record PageResult<T>(List<T> list, long total, int page, int size) {
     }
 
-    /** 仪表盘概览统计 */
+    /** 仪表盘概览统计（含与昨日对比） */
     public record OverviewStats(
             BigDecimal totalBalance,
             long accountCount,
@@ -21,7 +21,13 @@ public final class AdminDtos {
             long corporateCount,
             long customerCount,
             long todayTxnCount,
-            BigDecimal todayTxnAmount) {
+            BigDecimal todayTxnAmount,
+            long yesterdayTxnCount,
+            BigDecimal yesterdayTxnAmount) {
+    }
+
+    /** 管理端审批操作结果 */
+    public record AdminDecision(long id, String status, String message) {
     }
 
     /** 账户列表行 */

@@ -62,14 +62,19 @@ public class BankAdminQueryService {
                     long corporate = rs.getLong("corporate");
                     long customers = rs.getLong("customers");
                     return jdbc.queryForObject("""
-                            SELECT COUNT(*)                   AS cnt,
-                                   COALESCE(SUM(amount), 0)   AS amt
-                            FROM bank_transaction
-                            WHERE DATE(created_at) = CURDATE()
+                            SELECT (SELECT COUNT(*) FROM bank_transaction
+                                     WHERE DATE(created_at) = CURDATE())                                   AS cnt,
+                                   (SELECT COALESCE(SUM(amount), 0) FROM bank_transaction
+                                     WHERE DATE(created_at) = CURDATE())                                   AS amt,
+                                   (SELECT COUNT(*) FROM bank_transaction
+                                     WHERE DATE(created_at) = CURDATE() - INTERVAL 1 DAY)                  AS y_cnt,
+                                   (SELECT COALESCE(SUM(amount), 0) FROM bank_transaction
+                                     WHERE DATE(created_at) = CURDATE() - INTERVAL 1 DAY)                  AS y_amt
                             """,
                             (rs2, j) -> new OverviewStats(
                                     total, accounts, personal, corporate, customers,
-                                    rs2.getLong("cnt"), rs2.getBigDecimal("amt")));
+                                    rs2.getLong("cnt"), rs2.getBigDecimal("amt"),
+                                    rs2.getLong("y_cnt"), rs2.getBigDecimal("y_amt")));
                 });
     }
 
@@ -169,6 +174,24 @@ public class BankAdminQueryService {
                         formatTime(rs.getTimestamp("created_at"))),
                 appendPaging(args, page, size).toArray());
         return new PageResult<>(list, total, page, size);
+    }
+
+    /** 单笔订单查询（审批操作前取确认单信息） */
+    public OrderView orderById(long id) {
+        return jdbc.query("""
+                SELECT id, confirm_id, memory_id, from_account, to_account, amount, reason, status, created_at
+                FROM bank_transfer_order WHERE id = ?
+                """, (rs, i) -> new OrderView(
+                        rs.getLong("id"),
+                        rs.getString("confirm_id"),
+                        rs.getString("memory_id"),
+                        rs.getString("from_account"),
+                        rs.getString("to_account"),
+                        rs.getBigDecimal("amount"),
+                        rs.getString("reason"),
+                        rs.getString("status"),
+                        formatTime(rs.getTimestamp("created_at"))), id)
+                .stream().findFirst().orElse(null);
     }
 
     /** AI 工具审计日志分页 */

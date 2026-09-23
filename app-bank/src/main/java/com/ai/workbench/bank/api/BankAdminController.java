@@ -5,25 +5,33 @@ import java.util.List;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.ai.workbench.bank.admin.AdminDtos;
 import com.ai.workbench.bank.admin.BankAdminQueryService;
+import com.ai.workbench.bank.audit.ToolAuditLogger;
+import com.ai.workbench.bank.service.TransferService;
 
 /**
- * 管理端只读接口：供 /admin 后台（顾客管理、资金管理、可视化、AI 审计）使用。
- * 全部 GET、无任何写操作；分页参数 page 从 1 开始。
+ * 管理端接口：查询全部只读 GET；唯一写路径是审批中心的通过/驳回
+ * （复用 TransferService 的 HITL 确认状态机，CAS 幂等 + 过期检查 + 规则复检）。
  */
 @RestController
 @RequestMapping("/api/admin")
 public class BankAdminController {
 
     private final BankAdminQueryService query;
+    private final TransferService transferService;
+    private final ToolAuditLogger audit;
 
-    public BankAdminController(BankAdminQueryService query) {
+    public BankAdminController(BankAdminQueryService query, TransferService transferService,
+                               ToolAuditLogger audit) {
         this.query = query;
+        this.transferService = transferService;
+        this.audit = audit;
     }
 
     @GetMapping("/overview")
@@ -112,6 +120,32 @@ public class BankAdminController {
     public ResponseEntity<AdminDtos.OrderJourney> orderJourney(@PathVariable long id) {
         AdminDtos.OrderJourney journey = query.orderJourney(id);
         return journey == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(journey);
+    }
+
+    /**
+     * 管理端审批：通过=执行划款，驳回=取消订单。
+     * 复用订单原有 memoryId 做身份解析与限额复检（保证对公/个人分档口径不变），
+     * 管理端操作本身以 admin:console 记入审计日志。
+     */
+    @PostMapping("/transfer-orders/{id}/decision")
+    public ResponseEntity<AdminDtos.AdminDecision> decide(
+            @PathVariable long id, @RequestParam boolean approve) {
+        AdminDtos.OrderView order = query.orderById(id);
+        if (order == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!"PENDING".equals(order.status())) {
+            return ResponseEntity.ok(new AdminDtos.AdminDecision(id, order.status(),
+                    "订单 #%d 已处理（%s），无需审批".formatted(id, order.status())));
+        }
+        TransferService.TransferResult result =
+                transferService.confirmOrder(order.memoryId(), order.confirmId(), approve);
+        String action = approve ? "通过" : "驳回";
+        audit.record("admin:console", "admin.approval",
+                "管理端%s订单 #%d: %s -> %s, %.2f 元".formatted(action, id,
+                        order.fromAccount(), order.toAccount(), order.amount()),
+                result.kind());
+        return ResponseEntity.ok(new AdminDtos.AdminDecision(id, result.kind(), result.message()));
     }
 
     // ==================== 交易限额 ====================

@@ -35,9 +35,11 @@
           <template #default="{ row }">¥ {{ fmt(row.amount) }}</template>
         </el-table-column>
         <el-table-column prop="reason" label="附言" min-width="120" show-overflow-tooltip />
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="openJourney(row.id)">交易旅程</el-button>
+            <el-button size="small" type="success" link @click="decide(row, true)">通过</el-button>
+            <el-button size="small" type="danger" link @click="decide(row, false)">驳回</el-button>
+            <el-button size="small" type="primary" link @click="openJourney(row.id)">旅程</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -99,6 +101,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminApi, type ApprovalBoard, type OrderView, type OrderJourney } from '../../api/admin'
 
 const board = ref<ApprovalBoard | null>(null)
@@ -113,17 +116,43 @@ function statusType(s: string): 'warning' | 'success' | 'info' | 'danger' {
   return s === 'PENDING' ? 'warning' : s === 'EXECUTED' ? 'success' : s === 'CANCELLED' ? 'info' : 'danger'
 }
 
+async function load() {
+  board.value = await adminApi.approvals()
+  const all = await adminApi.transferOrders('', 1, 20)
+  orders.value = all.list
+}
+
+/** 管理端审批：敏感操作强制二次确认，通过=划款，驳回=取消 */
+async function decide(row: OrderView, approve: boolean) {
+  const action = approve ? '通过' : '驳回'
+  const tip = approve
+    ? `确认通过订单 #${row.id}？通过后将立即执行划款 ¥${fmt(row.amount)}（${row.fromAccount} → ${row.toAccount}）。`
+    : `确认驳回订单 #${row.id}？订单将取消，资金不变动。`
+  try {
+    await ElMessageBox.confirm(tip, `审批${action} · 二次确认`, {
+      type: 'warning',
+      confirmButtonText: `确认${action}`,
+      cancelButtonText: '再想想',
+    })
+  } catch {
+    return // 用户取消
+  }
+  const res = await adminApi.decideOrder(row.id, approve)
+  if (res.status === 'SUCCESS' || res.status === 'CANCELLED') {
+    ElMessage.success(res.message)
+  } else {
+    ElMessage.warning(res.message)
+  }
+  await load()
+}
+
 async function openJourney(id: number) {
   journey.value = null
   journeyDrawer.value = true
   journey.value = await adminApi.orderJourney(id)
 }
 
-onMounted(async () => {
-  board.value = await adminApi.approvals()
-  const all = await adminApi.transferOrders('', 1, 20)
-  orders.value = all.list
-})
+onMounted(load)
 </script>
 
 <style scoped>

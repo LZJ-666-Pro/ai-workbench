@@ -55,13 +55,26 @@ body {
 }
 
 .topbar nav a:hover {
-  background: var(--accent-weak);
-  color: var(--accent);
+  background: #e9f1f9;
+  color: #0b4f9e;
 }
 
 .topbar nav a.router-link-active {
-  background: var(--accent);
+  background: #0b4f9e;
   color: #fff;
+}
+
+/* 管理后台页右上角角色标识（顶栏导航已由侧栏菜单替代） */
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  background: #0b4f9e;
+  color: #fff;
+  font-weight: 500;
+  font-size: 13px;
 }
 
 .main {

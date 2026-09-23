@@ -20,6 +20,8 @@ const router = createRouter({
         { path: 'limits', name: 'admin-limits', component: () => import('../views/admin/AdminLimits.vue') },
         { path: 'config', name: 'admin-config', component: () => import('../views/admin/AdminConfig.vue') },
         { path: 'audit', name: 'admin-audit', component: () => import('../views/admin/AdminAudit.vue') },
+        { path: 'marketing', name: 'admin-marketing', component: () => import('../views/admin/AdminMarketing.vue') },
+        { path: 'visit', name: 'admin-visit', component: () => import('../views/admin/AdminVisit.vue') },
       ],
     },
   ],

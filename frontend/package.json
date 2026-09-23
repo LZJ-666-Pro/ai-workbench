@@ -10,6 +10,7 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
     "dompurify": "^3.4.15",
     "echarts": "^6.1.0",
     "element-plus": "^2.14.6",
