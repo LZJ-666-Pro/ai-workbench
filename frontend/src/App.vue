@@ -10,6 +10,9 @@ const isChatRoute = computed(() =>
 
 const isAdminRoute = computed(() => route.path.startsWith('/admin'))
 
+/** 首页与开发者页需要更宽的容器（1280px），体现平台容量感 */
+const isWideRoute = computed(() => ['/', '/developers'].includes(route.path))
+
 /** 顶栏导航：首页只放三个应用入口；银行助手页保留其管理后台；管理后台页由侧栏菜单承担导航 */
 const allLinks = [
   { to: '/bank', label: '🏦 银行助手' },
@@ -41,7 +44,7 @@ const navLinks = computed(() => {
     </div>
     <div v-else-if="isAdminRoute" class="role-chip">👔 当前角色：总行管理员</div>
   </header>
-  <main class="main" :class="{ flush: isChatRoute }">
+  <main class="main" :class="{ flush: isChatRoute, wide: isWideRoute }">
     <RouterView />
   </main>
 </template>
