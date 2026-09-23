@@ -366,9 +366,9 @@ function formatTime(timestamp: string): string {
             @input="autoResize"
           ></textarea>
           <button class="send-btn" :disabled="streaming || !input.trim()" @click="send" title="发送">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V6" />
+              <path d="M5.5 12.5 12 6l6.5 6.5" />
             </svg>
           </button>
         </div>
@@ -896,30 +896,42 @@ function formatTime(timestamp: string): string {
   cursor: not-allowed;
 }
 
+/* DeepSeek 风格：纯色圆形按钮，无渐变无重阴影，禁用为灰底白箭头 */
 .send-btn {
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
   border: none;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), #7c9bff);
+  background: var(--accent);
   color: #fff;
   cursor: pointer;
-  transition: all 0.2s;
-  box-shadow: 0 3px 10px rgba(79, 110, 242, 0.3);
+  transition: background 0.2s, transform 0.15s;
+}
+
+/* 显式定尺寸：防止 svg 作为 flex 子项被压缩到 0 宽 */
+.send-btn svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: block;
 }
 
 .send-btn:hover:not(:disabled) {
-  transform: scale(1.05);
+  background: #4359d8;
+}
+
+.send-btn:active:not(:disabled) {
+  transform: scale(0.94);
 }
 
 .send-btn:disabled {
-  background: #dfe3ea;
-  color: #aab0bb;
-  box-shadow: none;
+  background: #dde2ec;
+  color: rgba(255, 255, 255, 0.9);
   cursor: not-allowed;
 }
 
