@@ -11,7 +11,7 @@ const isChatRoute = computed(() =>
 
 <template>
   <header class="topbar">
-    <RouterLink to="/" class="brand">🛠️ ai-workbench</RouterLink>
+    <RouterLink to="/" class="brand">🧠 智汇工作台</RouterLink>
     <nav>
       <RouterLink to="/bank">🏦 银行助手</RouterLink>
       <RouterLink to="/knowledge">📚 知识库</RouterLink>
