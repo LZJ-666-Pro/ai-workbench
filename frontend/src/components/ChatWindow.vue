@@ -138,6 +138,12 @@ function saveLabel(label: string) {
   localStorage.setItem(`aiwb-labels-${props.agent}`, JSON.stringify(m))
 }
 
+/** 会话 ID 尾段（uuid）前 8 位做兜底名；直接截全串会把 "bank:身份:" 前缀带出来 */
+function shortId(memoryId: string): string {
+  const segs = memoryId.split(':')
+  return segs[segs.length - 1].substring(0, 8)
+}
+
 async function loadSessions() {
   loadingSessions.value = true
   try {
@@ -146,7 +152,7 @@ async function loadSessions() {
     sessions.value = apiSessions
       .map((s: any) => ({
         ...s,
-        label: labels[s.memoryId] || `会话 ${s.memoryId.substring(0, 8)}`,
+        label: labels[s.memoryId] || `会话 ${shortId(s.memoryId)}`,
         // 后端返回 updatedAt，本地项用 lastTime，这里统一成 lastTime 供排序/显示
         lastTime: s.lastTime || s.updatedAt || '',
       }))
