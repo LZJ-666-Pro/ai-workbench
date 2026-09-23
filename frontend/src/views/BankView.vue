@@ -19,5 +19,16 @@ import ChatWindow from '../components/ChatWindow.vue'
       { icon: '💸', label: '给李四转 200' },
       { icon: '🧾', label: '查王五的明细' },
     ]"
+    :business-functions="[
+      { icon: '🏦', label: '账户总览', prompt: '帮我看看我所有账户的余额情况' },
+      { icon: '📋', label: '交易明细', prompt: '看看我最近的交易明细' },
+      { icon: '💸', label: '转账汇款', prompt: '我想办理转账汇款，请告诉我需要提供哪些信息' },
+      { icon: '⏳', label: '待审批', prompt: '查一下有没有待我确认的转账订单' },
+      { icon: '🧾', label: '电子回单', prompt: '帮我生成最近一笔交易的电子回单' },
+      { icon: '📦', label: '批量付款', disabled: true },
+      { icon: '💰', label: '投资理财', disabled: true },
+      { icon: '🌏', label: '国际业务', disabled: true },
+      { icon: '🏛', label: '融资管理', disabled: true },
+    ]"
   />
 </template>

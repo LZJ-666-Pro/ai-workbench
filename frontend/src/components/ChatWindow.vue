@@ -8,6 +8,10 @@ import type { ConfirmRequestData, IdentityInfo } from '../api/chat'
 export interface Suggestion {
   icon: string
   label: string
+  /** 实际发送的指令文本；不传用 label */
+  prompt?: string
+  /** 置灰演示项（不可点击，如"批量付款/理财"等未开通功能） */
+  disabled?: boolean
 }
 
 const props = withDefaults(defineProps<{
@@ -28,6 +32,8 @@ const props = withDefaults(defineProps<{
   enableIdentity?: boolean
   /** 主题类名（如 theme-bank 企业银行主题），加在组件根元素上，不传用默认主题 */
   theme?: string
+  /** 侧栏业务功能区（企业网银菜单式入口：点击发送对应指令；disabled 项置灰展示） */
+  businessFunctions?: Suggestion[]
 }>(), {
   placeholder: '输入消息，回车发送…',
 })
@@ -268,10 +274,10 @@ function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
 }
 
-/** 点击建议问题：直接发送 */
+/** 点击建议问题：直接发送（prompt 优先于 label；置灰项不响应） */
 async function sendSuggestion(s: Suggestion) {
-  if (streaming.value) return
-  input.value = s.label
+  if (streaming.value || s.disabled) return
+  input.value = s.prompt || s.label
   await send()
 }
 
@@ -399,6 +405,25 @@ function formatTime(timestamp: string): string {
           </svg>
           开启新对话
         </button>
+
+        <!-- 业务功能区（企业网银菜单式入口）：有配置才渲染 -->
+        <template v-if="businessFunctions?.length">
+          <div class="sidebar-caption">业务功能</div>
+          <div class="biz-list">
+            <button
+              v-for="f in businessFunctions"
+              :key="f.label"
+              class="biz-item"
+              :class="{ disabled: f.disabled }"
+              :title="f.disabled ? '演示版暂未开通' : f.prompt || f.label"
+              @click="sendSuggestion(f)"
+            >
+              <span class="biz-icon">{{ f.icon }}</span>
+              <span class="biz-label">{{ f.label }}</span>
+              <span v-if="f.disabled" class="biz-badge">未开通</span>
+            </button>
+          </div>
+        </template>
 
         <div class="sidebar-caption">历史会话</div>
 
@@ -623,6 +648,60 @@ function formatTime(timestamp: string): string {
 
 .new-chat:hover {
   background: #3d5ce0;
+}
+
+/* 侧栏业务功能区（企业网银菜单式入口） */
+.biz-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+
+.biz-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.biz-item:hover:not(.disabled) {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+.biz-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.biz-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.biz-item.disabled {
+  cursor: not-allowed;
+  color: #b9c0cb;
+}
+
+.biz-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #eef1f5;
+  color: #b9c0cb;
+  flex-shrink: 0;
 }
 
 /* 多服务对象：身份选择器（侧栏顶部） */
