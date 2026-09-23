@@ -449,7 +449,7 @@ function formatTime(timestamp: string): string {
 
     <!-- 主聊天区域 -->
     <main class="chat-main">
-      <!-- 顶栏 -->
+      <!-- 顶栏：grid 三列保证标题视觉居中，右列与侧栏按钮等宽对称 -->
       <header class="chat-topbar">
         <button class="icon-btn" :disabled="loadingSessions" @click="toggleSidebar" title="收起/展开侧栏">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -457,7 +457,11 @@ function formatTime(timestamp: string): string {
             <path d="M9 4v16" />
           </svg>
         </button>
-        <h2 class="chat-title">{{ title }}</h2>
+        <div class="chat-title-wrap">
+          <h2 class="chat-title">{{ title }}</h2>
+          <span class="online-dot" title="在线"></span>
+        </div>
+        <span class="topbar-spacer" aria-hidden="true"></span>
       </header>
 
       <!-- 消息滚动区 -->
@@ -888,12 +892,34 @@ function formatTime(timestamp: string): string {
 }
 
 .chat-topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 34px 1fr 34px;
   align-items: center;
-  gap: 10px;
   padding: 10px 16px;
   border-bottom: 1px solid #f0f1f4;
   background: #fff;
+}
+
+.chat-title-wrap {
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.topbar-spacer {
+  width: 34px;
+}
+
+.online-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
+  flex-shrink: 0;
 }
 
 .icon-btn {
@@ -928,6 +954,7 @@ function formatTime(timestamp: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 /* ===== 消息滚动区 ===== */
