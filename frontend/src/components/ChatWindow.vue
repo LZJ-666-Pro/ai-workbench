@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions, listIdentities, getIdentity, setIdentity } from '../api/chat'
 import type { ConfirmRequestData, IdentityInfo } from '../api/chat'
 
@@ -142,6 +144,12 @@ function saveLabel(label: string) {
 function shortId(memoryId: string): string {
   const segs = memoryId.split(':')
   return segs[segs.length - 1].substring(0, 8)
+}
+
+/** AI 回复按 Markdown 渲染（加粗/表格/列表），DOMPurify 消毒防脚本注入 */
+function renderMd(text: string): string {
+  const html = marked.parse(text ?? '', { async: false, gfm: true, breaks: true }) as string
+  return DOMPurify.sanitize(html)
 }
 
 async function loadSessions() {
@@ -503,12 +511,19 @@ function formatTime(timestamp: string): string {
                 <div v-else class="card-status">🚫 已取消</div>
               </template>
               <template v-else>
-                {{ m.content }}<template
+                <!-- 助手消息按 Markdown 渲染（模型输出加粗/表格/列表），用户消息保持纯文本防注入 -->
+                <div
+                  v-if="m.role === 'assistant' && m.content"
+                  class="md"
+                  v-html="renderMd(m.content)"
+                ></div>
+                <template v-else>{{ m.content }}</template>
+                <span
                   v-if="streaming && m.role === 'assistant' && i === messages.length - 1"
                 ><span v-if="!m.content" class="thinking">思考中…</span><span
                     v-else
                     class="caret"
-                  >▍</span></template>
+                  >▍</span></span>
               </template>
             </div>
           </div>
@@ -1070,6 +1085,84 @@ function formatTime(timestamp: string): string {
   color: var(--text);
   padding: 2px 4px;
   border-radius: 0;
+}
+
+/* Markdown 渲染内容（助手消息）：覆盖气泡的 pre-wrap，间距交给元素 margin */
+.bubble .md {
+  white-space: normal;
+}
+
+.bubble .md p {
+  margin: 0 0 8px;
+}
+
+.bubble .md p:last-child {
+  margin-bottom: 0;
+}
+
+.bubble .md ul,
+.bubble .md ol {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+}
+
+.bubble .md li {
+  margin: 2px 0;
+}
+
+.bubble .md table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.bubble .md th,
+.bubble .md td {
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.bubble .md th {
+  background: rgba(99, 102, 241, 0.08);
+  font-weight: 600;
+}
+
+.bubble .md code {
+  background: rgba(99, 102, 241, 0.1);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.bubble .md pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.bubble .md pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.bubble .md blockquote {
+  margin: 6px 0;
+  padding: 2px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+}
+
+.bubble .md a {
+  color: var(--accent);
 }
 
 .msg-row.assistant .caret {
