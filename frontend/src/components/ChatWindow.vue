@@ -602,7 +602,7 @@ function formatTime(timestamp: string): string {
   white-space: nowrap;
 }
 
-/* "…" 更多按钮：hover 或菜单展开时显现 */
+/* "…" 更多按钮：hover 或菜单展开时显现，当前选中会话常显 */
 .session-more {
   flex-shrink: 0;
   display: flex;
@@ -610,6 +610,7 @@ function formatTime(timestamp: string): string {
   justify-content: center;
   width: 22px;
   height: 22px;
+  padding: 0;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -620,7 +621,8 @@ function formatTime(timestamp: string): string {
 }
 
 .session-item:hover .session-more,
-.session-item.menu-open .session-more {
+.session-item.menu-open .session-more,
+.session-item.active .session-more {
   opacity: 1;
 }
 
