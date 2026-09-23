@@ -3,9 +3,9 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
-/** 三个助手页是全屏聊天工作区，不走 .main 的限宽布局 */
+/** 三个助手页与管理后台是全屏工作区，不走 .main 的限宽布局 */
 const isChatRoute = computed(() =>
-  ['/bank', '/knowledge', '/interview'].some(p => route.path.startsWith(p)),
+  ['/bank', '/knowledge', '/interview', '/admin'].some(p => route.path.startsWith(p)),
 )
 </script>
 
@@ -16,6 +16,7 @@ const isChatRoute = computed(() =>
       <RouterLink to="/bank">🏦 银行助手</RouterLink>
       <RouterLink to="/knowledge">📚 知识库</RouterLink>
       <RouterLink to="/interview">🎤 面试模拟</RouterLink>
+      <RouterLink to="/admin">📊 管理后台</RouterLink>
     </nav>
   </header>
   <main class="main" :class="{ flush: isChatRoute }">
