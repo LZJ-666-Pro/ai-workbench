@@ -7,13 +7,13 @@
         智汇银行（总行） · 总行管理员 · <span class="env-tag">生产环境</span>
       </p>
       <div class="cap-row">
-        <span class="cap"><el-icon><Lightning /></el-icon>LLM 接入 <b>4 个模型</b></span>
+        <span class="cap"><el-icon><Lightning /></el-icon>LLM 接入<span class="cap-badge">4 个模型</span></span>
         <span class="sep">·</span>
-        <span class="cap"><el-icon><Connection /></el-icon>SSE 流式 <b>平均首字 320ms</b></span>
+        <span class="cap"><el-icon><Connection /></el-icon>SSE 流式<span class="cap-badge">320ms</span></span>
         <span class="sep">·</span>
-        <span class="cap"><el-icon><Cpu /></el-icon>会话记忆 <b>上下文 32k</b></span>
+        <span class="cap"><el-icon><Cpu /></el-icon>会话记忆<span class="cap-badge">32k</span></span>
         <span class="sep">·</span>
-        <span class="cap"><el-icon><SetUp /></el-icon>工具框架 <b>注册工具 12 个</b></span>
+        <span class="cap"><el-icon><SetUp /></el-icon>工具框架<span class="cap-badge">12 个</span></span>
       </div>
     </div>
 
@@ -45,7 +45,7 @@
         <div class="create-title">新建 Agent 应用</div>
         <div class="create-sub">用一份 AgentSpec 声明接入，或通过平台 API 对接已有应用</div>
         <div class="app-actions center">
-          <el-button type="primary" class="open-btn" @click="specVisible = true">用 JSON 注册</el-button>
+          <el-button class="outline-btn" @click="specVisible = true">用 JSON 注册</el-button>
           <el-button link type="primary" @click="router.push('/developers')">查看 API 文档</el-button>
         </div>
       </div>
@@ -63,8 +63,9 @@
         <span class="pb-item">管理端接口 <b>17</b> 个</span>
       </div>
       <div class="pb-links">
-        <el-button size="small" link type="primary" @click="router.push('/developers')">开发者文档</el-button>
-        <el-button size="small" link type="primary" @click="router.push('/admin/dashboard')">平台监控</el-button>
+        <span class="pb-updated">数据更新于 {{ updatedAt }}</span>
+        <el-button size="small" class="outline-btn" @click="router.push('/developers')">开发者文档</el-button>
+        <el-button size="small" class="outline-btn" @click="router.push('/admin/dashboard')">平台监控</el-button>
       </div>
     </div>
 
@@ -105,6 +106,12 @@ import {
 
 const router = useRouter()
 const specVisible = ref(false)
+
+/** 平台状态栏的数据更新时间（页面加载时刻） */
+const updatedAt = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+}).format(new Date())
 
 const greeting = computed(() => {
   const h = new Date().getHours()
@@ -170,15 +177,24 @@ const apps: AppCard[] = [
   --el-color-primary-light-8: #d2e2f2;
   --el-color-primary-light-9: #e9f1f9;
   --el-color-primary-dark-2: #09417f;
+
+  /* 容器驱动布局：撑满视口，消除下方空白 */
+  min-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
 }
 
-/* 顶部上下文区：浅蓝灰底面板，租户信息 + 能力条合并 */
+/* 顶部上下文区：问候语在上、能力条贴底，浅蓝灰底面板 */
 .context-panel {
   background: #f5f8fc;
   border: 1px solid #e5e8ec;
   border-radius: 6px;
   padding: 20px 24px 16px;
   margin-bottom: 24px;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 }
 .context-panel h1 {
   font-size: 20px;
@@ -199,44 +215,61 @@ const apps: AppCard[] = [
   padding: 2px 8px;
   font-weight: 600;
 }
-/* 能力条：一行内联，弱化为底座信息 */
+/* 能力条：一行内联，贴底展示；关键数字加粗深色 */
 .cap-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px 14px;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid #e8edf4;
   font-size: 12.5px;
   color: #7a8798;
 }
 .cap {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
 }
-.cap b { color: #1f2d3d; font-weight: 600; }
+/* 数字指标做成浅蓝底 badge，与功能名分层 */
+.cap-badge {
+  background: #e9f1f9;
+  color: #0b4f9e;
+  font-weight: 600;
+  font-size: 12px;
+  border-radius: 4px;
+  padding: 2px 8px;
+}
 .cap .el-icon { color: #0b4f9e; font-size: 15px; }
 .sep { color: #c3ccd8; }
 
-/* 应用中心：2 × 2 大卡片 */
+/* 应用中心：2 × 2 大卡片，行等高、区域撑满剩余视口 */
 .section-title {
-  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
   font-weight: 700;
   color: #1f2d3d;
   margin-bottom: 14px;
 }
+.section-title::before {
+  content: '';
+  width: 4px;
+  height: 16px;
+  background: #0b4f9e;
+  border-radius: 2px;
+}
 .app-grid {
+  flex: 1;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
   gap: 16px;
   margin-bottom: 24px;
 }
 .app-card {
   display: flex;
   flex-direction: column;
-  min-height: 216px;
+  min-height: 260px;
   background: #fff;
   border: 1px solid #e5e8ec;
   border-radius: 6px;
@@ -275,8 +308,8 @@ const apps: AppCard[] = [
   display: flex;
   gap: 48px;
   border-top: 1px solid #f0f2f6;
-  padding-top: 14px;
-  margin-bottom: 16px;
+  padding-top: 13px;
+  margin-bottom: 13px;
 }
 .metric { display: flex; flex-direction: column; }
 .metric-value {
@@ -291,9 +324,23 @@ const apps: AppCard[] = [
   align-items: center;
   gap: 6px;
   margin-top: auto;
+  border-top: 1px solid #f0f2f6;
+  padding-top: 12px;
 }
 .app-actions.center { justify-content: center; }
 .open-btn { background: #0b4f9e; border-color: #0b4f9e; }
+
+/* 次要操作：白底描边，与主操作区分 */
+.outline-btn {
+  background: #fff;
+  border-color: #9fbcd9;
+  color: #0b4f9e;
+}
+.outline-btn:hover {
+  background: #f2f7fc;
+  border-color: #0b4f9e;
+  color: #0b4f9e;
+}
 
 /* 新建 Agent 卡：虚线占位 */
 .create-card {
@@ -309,13 +356,13 @@ const apps: AppCard[] = [
 .create-title { font-size: 16px; font-weight: 700; color: #1f2d3d; }
 .create-sub { font-size: 12.5px; color: #8a97a8; line-height: 1.7; margin-bottom: 10px; max-width: 320px; }
 
-/* 平台状态栏：浅色，弱化视觉权重 */
+/* 平台状态栏：浅蓝底呼应顶部上下文区，弱化视觉权重 */
 .platform-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #f7f9fc;
-  border: 1px solid #e5e8ec;
+  background: #f0f5fb;
+  border: 1px solid #dbe7f3;
   border-radius: 6px;
   padding: 13px 20px;
   color: #5a6b80;
@@ -327,7 +374,17 @@ const apps: AppCard[] = [
   font-variant-numeric: tabular-nums;
   margin: 0 2px;
 }
-.pb-links :deep(.el-button) { color: #0b4f9e; }
+.pb-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pb-updated {
+  font-size: 11.5px;
+  color: #98a2b0;
+  margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+}
 
 .spec-json {
   background: #0e2a4d;
