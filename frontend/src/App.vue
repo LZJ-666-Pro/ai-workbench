@@ -35,6 +35,10 @@ const navLinks = computed(() => {
     <nav v-if="navLinks.length">
       <RouterLink v-for="link in navLinks" :key="link.to" :to="link.to">{{ link.label }}</RouterLink>
     </nav>
+    <div v-if="route.path === '/'" class="home-extras">
+      <span class="env-tag">生产环境</span>
+      <span class="user-chip">👤 张三 · 总行管理员</span>
+    </div>
     <div v-else-if="isAdminRoute" class="role-chip">👔 当前角色：总行管理员</div>
   </header>
   <main class="main" :class="{ flush: isChatRoute }">

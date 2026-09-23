@@ -7,6 +7,7 @@ const router = createRouter({
     { path: '/bank', name: 'bank', component: () => import('../views/BankView.vue') },
     { path: '/knowledge', name: 'knowledge', component: () => import('../views/KnowledgeView.vue') },
     { path: '/interview', name: 'interview', component: () => import('../views/InterviewView.vue') },
+    { path: '/developers', name: 'developers', component: () => import('../views/DevelopersView.vue') },
     {
       path: '/admin',
       component: () => import('../views/admin/AdminLayout.vue'),
