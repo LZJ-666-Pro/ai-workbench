@@ -92,32 +92,22 @@ export async function loadHistoryMessages(
   agent: string,
   memoryId: string,
 ): Promise<HistoryMsg[]> {
-  try {
-    const resp = await fetch(`${basePath}/api/memory/${agent}/${encodeURIComponent(memoryId)}`)
-    if (!resp.ok) {
-      console.warn(`加载历史消息失败: HTTP ${resp.status}`)
-      return []
-    }
-    return (await resp.json()) as HistoryMsg[]
-  } catch (e) {
-    console.error('加载历史消息异常:', e)
-    return []
+  const resp = await fetch(`${basePath}/api/memory/${agent}/${encodeURIComponent(memoryId)}`)
+  if (!resp.ok) {
+    // 抛错让调用方走本地缓存兜底，而不是把"后端不可用"当成"没有历史"
+    throw new Error(`加载历史消息失败: HTTP ${resp.status}`)
   }
+  return (await resp.json()) as HistoryMsg[]
 }
 
 /** 从数据库获取指定 Agent 的会话列表 */
 export async function listSessions(basePath: string, agent: string): Promise<SessionRecord[]> {
-  try {
-    const resp = await fetch(`${basePath}/api/sessions/${agent}`)
-    if (!resp.ok) {
-      console.warn(`加载会话列表失败: HTTP ${resp.status}`)
-      return []
-    }
-    return await resp.json()
-  } catch (e) {
-    console.error('加载会话列表异常:', e)
-    return []
+  const resp = await fetch(`${basePath}/api/sessions/${agent}`)
+  if (!resp.ok) {
+    // 抛错而不是返回空数组：调用方需要区分"没有会话"和"后端不可用"（后者要走缓存兜底）
+    throw new Error(`加载会话列表失败: HTTP ${resp.status}`)
   }
+  return await resp.json()
 }
 
 /** 获取当前会话 ID；没有则新建（会话按 Agent 隔离，刷新页面不丢） */
@@ -136,6 +126,40 @@ export function newMemoryId(agent: string): string {
   const id = `${agent}:${crypto.randomUUID()}`
   localStorage.setItem(`aiwb-current-${agent}`, id)
   return id
+}
+
+// ---------- 本地缓存兜底：后端不在线时也能查看历史数据 ----------
+// 数据正本仍在 MySQL，这里只是最近一次同步成功的快照。
+
+export interface CachedMsg { role: string; content: string }
+
+export function cacheMessages(agent: string, memoryId: string, msgs: CachedMsg[]) {
+  try {
+    localStorage.setItem(`aiwb-msgs-${agent}-${memoryId}`, JSON.stringify(msgs))
+  } catch { /* 存储满等异常不阻塞主流程 */ }
+}
+
+export function readCachedMessages(agent: string, memoryId: string): CachedMsg[] {
+  try {
+    return JSON.parse(localStorage.getItem(`aiwb-msgs-${agent}-${memoryId}`) || '[]')
+  } catch {
+    return []
+  }
+}
+
+export function cacheSessions(agent: string, sessions: unknown[]) {
+  try {
+    localStorage.setItem(`aiwb-sessions-${agent}`, JSON.stringify(sessions))
+  } catch { /* ignore */ }
+}
+
+export function readCachedSessions(agent: string): unknown[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem(`aiwb-sessions-${agent}`) || '[]')
+    return Array.isArray(arr) ? arr : []
+  } catch {
+    return []
+  }
 }
 
 /** 确认/取消转账卡片。幂等性由后端状态机保证：重复提交只会得到"已处理过"提示 */

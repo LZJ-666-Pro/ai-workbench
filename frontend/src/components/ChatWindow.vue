@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages } from '../api/chat'
+import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions } from '../api/chat'
 import type { ConfirmRequestData } from '../api/chat'
 
 export interface Suggestion {
@@ -66,10 +66,20 @@ const heroName = computed(() => props.botName ?? props.title)
 
 onMounted(async () => {
   memoryId = getMemoryId(props.agent)
-  // 按时间序恢复该会话的历史消息（刷新/重进页面不丢聊天记录）
-  const history = await loadHistoryMessages(props.basePath, props.agent, memoryId)
-  history.forEach((h: any) => messages.value.push({ role: h.role, kind: 'text', content: h.content }))
-  await loadSessions()
+  // 先用本地缓存秒开（后端不在线时也有数据可看），再用 DB 最新数据覆盖
+  const cached = readCachedMessages(props.agent, memoryId)
+  if (cached.length) {
+    messages.value = cached.map(m => ({ role: m.role as Msg['role'], kind: 'text', content: m.content }))
+  }
+  // 历史消息与会话列表并行加载，互不阻塞；历史拉取失败时保留缓存显示
+  const [histRes] = await Promise.allSettled([
+    loadHistoryMessages(props.basePath, props.agent, memoryId),
+    loadSessions(),
+  ])
+  if (histRes.status === 'fulfilled' && histRes.value.length) {
+    messages.value = histRes.value.map((h: any) => ({ role: h.role, kind: 'text', content: h.content }))
+    cacheMessages(props.agent, memoryId, histRes.value)
+  }
   scrollBottom()
 })
 
@@ -99,10 +109,21 @@ async function loadSessions() {
       .map((s: any) => ({
         ...s,
         label: labels[s.memoryId] || `会话 ${s.memoryId.substring(0, 8)}`,
+        // 后端返回 updatedAt，本地项用 lastTime，这里统一成 lastTime 供排序/显示
+        lastTime: s.lastTime || s.updatedAt || '',
       }))
       .sort((a, b) => b.lastTime.localeCompare(a.lastTime))
+    // 只在确实拿到数据时更新缓存快照，避免空响应把缓存清掉
+    if (sessions.value.length) {
+      cacheSessions(props.agent, sessions.value)
+    }
   } catch (e) {
     console.error('加载会话列表失败:', e)
+    // 后端不在线时用最近一次同步的快照兜底
+    const cached = readCachedSessions(props.agent) as typeof sessions.value
+    if (cached.length && sessions.value.length === 0) {
+      sessions.value = cached
+    }
   } finally {
     loadingSessions.value = false
   }
@@ -111,8 +132,24 @@ async function loadSessions() {
 async function switchSession(sessionId: string) {
   if (loadingSessions.value || memoryId === sessionId) return
   memoryId = sessionId
-  const history = await loadHistoryMessages(props.basePath, props.agent, memoryId)
-  messages.value = history.map(h => ({ role: h.role, kind: 'text', content: h.content }))
+  // 同步当前会话到 localStorage，保证刷新后仍停留在该会话
+  localStorage.setItem(`aiwb-current-${props.agent}`, sessionId)
+  // 缓存秒开，再拉 DB 最新
+  const cached = readCachedMessages(props.agent, sessionId)
+  if (cached.length) {
+    messages.value = cached.map(m => ({ role: m.role as Msg['role'], kind: 'text', content: m.content }))
+    scrollBottom()
+  }
+  // 拉取失败（后端不可用）时保留缓存显示
+  try {
+    const history = await loadHistoryMessages(props.basePath, props.agent, memoryId)
+    if (history.length) {
+      messages.value = history.map(h => ({ role: h.role, kind: 'text', content: h.content }))
+      cacheMessages(props.agent, sessionId, history)
+    } else if (!cached.length) {
+      messages.value = []
+    }
+  } catch { /* keep cached messages */ }
   // 更新列表顺序（把选中的移到最前）
   const idx = sessions.value.findIndex(s => s.memoryId === sessionId)
   if (idx >= 0) {
@@ -127,7 +164,7 @@ function newSession() {
   messages.value = []
   // 立即在侧栏顶部出现"新对话"记录（此刻还未落库，不查 DB 以免把它冲掉）
   sessions.value = sessions.value.filter(s => s.label !== '新对话')
-  sessions.value.unshift({ memoryId, label: '新对话', lastTime: new Date().toISOString() })
+  sessions.value.unshift({ memoryId, label: '新对话', lastTime: new Date().toISOString(), active: true })
   scrollBottom()
 }
 
@@ -185,6 +222,10 @@ async function send() {
     streaming.value = false
     controller = null
     scrollBottom()
+    // 本轮消息写入本地缓存（后端不在线时下次也能看到）
+    cacheMessages(props.agent, memoryId, messages.value
+      .filter(m => m.kind === 'text')
+      .map(m => ({ role: m.role, content: m.content })))
     // 消息发出后重新加载会话列表（因为可能产生新的会话）
     loadSessions()
   }
@@ -258,17 +299,18 @@ function formatTime(timestamp: string): string {
           <p>暂无历史会话</p>
           <p class="hint">开始新对话后，记录会显示在这里</p>
         </div>
-        <div
-          v-else
-          v-for="session in sessions"
-          :key="session.memoryId"
-          class="session-item"
-          :class="{ active: session.memoryId === memoryId }"
-          @click="switchSession(session.memoryId)"
-        >
-          <span class="session-label">{{ session.label }}</span>
-          <span class="session-time">{{ formatTime(session.lastTime) }}</span>
-        </div>
+        <template v-else>
+          <div
+            v-for="session in sessions"
+            :key="session.memoryId"
+            class="session-item"
+            :class="{ active: session.memoryId === memoryId }"
+            @click="switchSession(session.memoryId)"
+          >
+            <span class="session-label">{{ session.label }}</span>
+            <span class="session-time">{{ formatTime(session.lastTime) }}</span>
+          </div>
+        </template>
       </div>
 
       <div class="sidebar-footer">
