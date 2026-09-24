@@ -111,6 +111,44 @@ body {
   max-width: 1280px;
 }
 
+/* 首页顶栏：通知铃铛 */
+.bell-wrap {
+  display: inline-flex;
+  cursor: pointer;
+}
+.bell {
+  font-size: 18px;
+  color: #4a5a6d;
+}
+
+/* 通知中心下拉 */
+.notif-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1f2d3d;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eef1f5;
+  margin-bottom: 4px;
+}
+.notif-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #4a5a6d;
+  line-height: 2.2;
+}
+.notif-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #0b4f9e;
+  flex-shrink: 0;
+}
+.notif-dot.warn {
+  background: #e6a23c;
+}
+
 .main {
   max-width: 880px;
   margin: 0 auto;
