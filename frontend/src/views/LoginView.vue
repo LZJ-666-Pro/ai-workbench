@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   View, Hide, Key, Postcard, Connection,
-  User, Lock, ChatDotRound, Coin, Share,
+  User, Lock, ChatDotRound, Document, Operation,
 } from '@element-plus/icons-vue'
 import { login } from '../api/auth'
 
@@ -80,559 +80,358 @@ function notAvailable(feature: string) {
 
 <template>
   <div class="login-page">
-    <!-- 左侧品牌区：平台定位 + 泛化能力展示（不暴露具体业务应用） -->
-    <section class="brand-pane">
-      <div class="brand-top">
-        <span class="logo-mark">智</span>
-        <span class="brand-name">智汇工作台</span>
+    <!-- 背景装饰：星点连线网格（科技感） -->
+    <svg class="mesh mesh-tl" width="360" height="300" viewBox="0 0 360 300" fill="none" aria-hidden="true">
+      <circle cx="40" cy="60" r="3" fill="rgba(255,255,255,.5)" />
+      <circle cx="150" cy="30" r="2" fill="rgba(255,255,255,.35)" />
+      <circle cx="240" cy="90" r="2.5" fill="rgba(255,255,255,.4)" />
+      <circle cx="90" cy="160" r="2" fill="rgba(255,255,255,.3)" />
+      <circle cx="200" cy="200" r="3" fill="rgba(255,255,255,.35)" />
+      <path d="M40 60 L150 30 L240 90 L200 200 L90 160 Z" stroke="rgba(255,255,255,.14)" fill="none" />
+      <path d="M40 60 L90 160 M150 30 L90 160 M240 90 L200 200" stroke="rgba(255,255,255,.1)" fill="none" />
+    </svg>
+    <svg class="mesh mesh-br" width="420" height="340" viewBox="0 0 420 340" fill="none" aria-hidden="true">
+      <circle cx="380" cy="60" r="3" fill="rgba(255,255,255,.45)" />
+      <circle cx="280" cy="30" r="2" fill="rgba(255,255,255,.3)" />
+      <circle cx="180" cy="110" r="2.5" fill="rgba(255,255,255,.35)" />
+      <circle cx="330" cy="180" r="2" fill="rgba(255,255,255,.3)" />
+      <circle cx="120" cy="250" r="3" fill="rgba(255,255,255,.3)" />
+      <path d="M380 60 L280 30 L180 110 L330 180 L120 250" stroke="rgba(255,255,255,.12)" fill="none" />
+      <path d="M380 60 L330 180 M280 30 L180 110" stroke="rgba(255,255,255,.09)" fill="none" />
+    </svg>
+
+    <span class="env-tag">生产环境</span>
+    <button type="button" class="apply-hint" @click="notAvailable('账号开通')">还没有账号？联系管理员开通</button>
+
+    <!-- 品牌区：直接落在页面上，不在卡内 -->
+    <header class="hero">
+      <h1 class="hero-title">AI 工作台</h1>
+      <p class="hero-sub">一个工作台，承载企业所有的 AI 能力</p>
+      <div class="hero-pills">
+        <span class="pill"><el-icon><ChatDotRound /></el-icon>智能对话<i class="dot g"></i></span>
+        <span class="sep">·</span>
+        <span class="pill"><el-icon><Document /></el-icon>知识检索<i class="dot y"></i></span>
+        <span class="sep">·</span>
+        <span class="pill"><el-icon><Operation /></el-icon>流程自动化<i class="dot b"></i></span>
+      </div>
+    </header>
+
+    <!-- 登录卡：只装表单 -->
+    <div class="login-card">
+      <h2 class="card-title">欢迎回来</h2>
+      <p class="card-sub">登录工作台，进入你的专属空间</p>
+
+      <!-- 登录身份选项卡 -->
+      <div class="tab-bar" role="tablist">
+        <button
+          v-for="t in TABS"
+          :key="t.key"
+          type="button"
+          class="tab-item"
+          :class="{ active: activeTab === t.key }"
+          role="tab"
+          :aria-selected="activeTab === t.key"
+          @click="activeTab = t.key; errorMsg = ''"
+        >
+          {{ t.label }}
+        </button>
       </div>
 
-      <div class="brand-body">
-        <span class="brand-eyebrow">AI 工作台</span>
-        <h2 class="brand-title">一个工作台，<br>承载企业所有的 AI 能力</h2>
-        <p class="brand-desc">对话、检索、流程三类 Agent 统一接入 · 统一身份 · 统一入口 · 全程审计</p>
+      <form class="login-form" @submit.prevent="submit">
+        <label class="field">
+          <span class="input-wrap">
+            <el-icon class="input-icon"><User /></el-icon>
+            <input
+              v-model="username"
+              class="field-input"
+              type="text"
+              :placeholder="activePlaceholder"
+              autocomplete="username"
+            >
+          </span>
+        </label>
 
-        <!-- 平台能力概览：只讲能力类型，不点名具体应用 -->
-        <div class="app-preview">
-          <div class="app-card">
-            <span class="app-icon"><el-icon><ChatDotRound /></el-icon></span>
-            <span class="app-meta">
-              <span class="app-name">智能对话 Agent</span>
-              <span class="app-type">业务问答 · 办理 · 人工确认卡</span>
-            </span>
-            <span class="app-status run">运行中</span>
-          </div>
-          <div class="app-card">
-            <span class="app-icon"><el-icon><Coin /></el-icon></span>
-            <span class="app-meta">
-              <span class="app-name">知识检索 Agent</span>
-              <span class="app-type">企业知识库 · 引用可溯源</span>
-            </span>
-            <span class="app-status building">建设中</span>
-          </div>
-          <div class="app-card">
-            <span class="app-icon"><el-icon><Share /></el-icon></span>
-            <span class="app-meta">
-              <span class="app-name">流程自动化 Agent</span>
-              <span class="app-type">审批流转 · 结构化报告生成</span>
-            </span>
-            <span class="app-status ready">可用</span>
-          </div>
-        </div>
+        <label class="field">
+          <span class="input-wrap">
+            <el-icon class="input-icon"><Lock /></el-icon>
+            <input
+              v-model="password"
+              class="field-input"
+              :type="showPassword ? 'text' : 'password'"
+              placeholder="密码"
+              autocomplete="current-password"
+            >
+            <button
+              type="button"
+              class="eye-btn"
+              :title="showPassword ? '隐藏密码' : '显示密码'"
+              @click="showPassword = !showPassword"
+            >
+              <el-icon><component :is="showPassword ? Hide : View" /></el-icon>
+            </button>
+          </span>
+        </label>
 
-        <div class="brand-stats">
-          <div class="stat"><span class="stat-label">智能体应用</span><span class="stat-num">12</span></div>
-          <div class="stat-line"></div>
-          <div class="stat"><span class="stat-label">业务工具</span><span class="stat-num">28</span></div>
-          <div class="stat-line"></div>
-          <div class="stat"><span class="stat-label">调用成功率</span><span class="stat-num">99.5%</span></div>
-        </div>
-      </div>
-
-      <div class="brand-foot">© 2026 智汇工作台 v1.0.0 · 京ICP备20260088号</div>
-    </section>
-
-    <!-- 右侧表单区 -->
-    <section class="form-pane">
-      <div class="form-top">
-        <button type="button" class="form-top-hint" @click="notAvailable('账号开通')">还没有账号？联系管理员开通</button>
-        <span class="env-tag">生产环境</span>
-      </div>
-
-      <div class="form-body">
-        <h1 class="login-title">欢迎回来</h1>
-        <p class="login-sub">登录工作台，进入你的专属空间</p>
-
-        <!-- 登录身份选项卡 -->
-        <div class="tab-bar" role="tablist">
-          <button
-            v-for="t in TABS"
-            :key="t.key"
-            type="button"
-            class="tab-item"
-            :class="{ active: activeTab === t.key }"
-            role="tab"
-            :aria-selected="activeTab === t.key"
-            @click="activeTab = t.key; errorMsg = ''"
-          >
-            {{ t.label }}
-          </button>
-        </div>
-
-        <form class="login-form" @submit.prevent="submit">
-          <label class="field">
-            <span class="field-label">{{ TAB_LABEL[activeTab] }}账号</span>
-            <span class="input-wrap">
-              <el-icon class="input-icon"><User /></el-icon>
-              <input
-                v-model="username"
-                class="field-input has-leading-icon"
-                type="text"
-                :placeholder="activePlaceholder"
-                autocomplete="username"
-              >
-            </span>
+        <div class="form-row">
+          <label class="remember">
+            <input v-model="rememberMe" type="checkbox" class="checkbox">
+            记住我
           </label>
-
-          <label class="field">
-            <span class="field-label">密码</span>
-            <span class="input-wrap">
-              <el-icon class="input-icon"><Lock /></el-icon>
-              <input
-                v-model="password"
-                class="field-input has-leading-icon"
-                :type="showPassword ? 'text' : 'password'"
-                placeholder="请输入密码"
-                autocomplete="current-password"
-              >
-              <button
-                type="button"
-                class="eye-btn"
-                :title="showPassword ? '隐藏密码' : '显示密码'"
-                @click="showPassword = !showPassword"
-              >
-                <el-icon><component :is="showPassword ? Hide : View" /></el-icon>
-              </button>
-            </span>
-          </label>
-
-          <div class="form-row">
-            <label class="remember">
-              <input v-model="rememberMe" type="checkbox" class="checkbox">
-              记住我
-            </label>
-            <button type="button" class="link-btn" @click="notAvailable('忘记密码')">忘记密码?</button>
-          </div>
-
-          <div v-if="errorMsg" class="error-tip">{{ errorMsg }}</div>
-
-          <button class="submit-btn" type="submit" :disabled="loading">
-            <span v-if="loading" class="spinner" aria-hidden="true"></span>
-            {{ loading ? '登录中…' : '登 录' }}
-          </button>
-        </form>
-
-        <!-- 其他登录方式：企业平台标志位 -->
-        <div class="alt-divider"><span>其他登录方式</span></div>
-        <div class="alt-list">
-          <button type="button" class="alt-btn" @click="notAvailable('U盾登录')">
-            <el-icon><Key /></el-icon>U盾登录
-          </button>
-          <button type="button" class="alt-btn" @click="notAvailable('数字证书登录')">
-            <el-icon><Postcard /></el-icon>数字证书
-          </button>
-          <button type="button" class="alt-btn" @click="notAvailable('SSO 单点登录')">
-            <el-icon><Connection /></el-icon>SSO 单点登录
-          </button>
+          <button type="button" class="link-btn" @click="notAvailable('忘记密码')">忘记密码?</button>
         </div>
 
-        <!-- 测试账号：跟随身份选项卡变化 -->
-        <div class="demo-area">
-          <div class="demo-caption">测试账号（密码 {{ DEMO_PASSWORD }}，点击填充）</div>
-          <button
-            type="button"
-            class="demo-chip"
-            :class="{ filled: username === tabAccount.username }"
-            @click="fillAccount"
-          >
-            <span class="demo-name">{{ tabAccount.name }}</span>
-            <span class="demo-desc">{{ tabAccount.desc }}</span>
-          </button>
-        </div>
+        <div v-if="errorMsg" class="error-tip">{{ errorMsg }}</div>
+
+        <button class="submit-btn" type="submit" :disabled="loading">
+          <span v-if="loading" class="spinner" aria-hidden="true"></span>
+          {{ loading ? '登录中…' : '登 录' }}
+        </button>
+      </form>
+
+      <!-- 其他登录方式：企业平台标志位 -->
+      <div class="alt-divider"><span>其他登录方式</span></div>
+      <div class="alt-list">
+        <button type="button" class="alt-btn" @click="notAvailable('U盾登录')">
+          <el-icon><Key /></el-icon>U盾登录
+        </button>
+        <button type="button" class="alt-btn" @click="notAvailable('数字证书登录')">
+          <el-icon><Postcard /></el-icon>数字证书
+        </button>
+        <button type="button" class="alt-btn" @click="notAvailable('SSO 单点登录')">
+          <el-icon><Connection /></el-icon>SSO 单点登录
+        </button>
       </div>
 
-      <div class="form-foot">
-        <span class="security-pill">🔒 本系统为内部业务系统，所有操作将被记录并纳入审计</span>
+      <!-- 测试账号：跟随身份选项卡变化（演示便捷入口） -->
+      <div class="demo-area">
+        <div class="demo-caption">测试账号（密码 {{ DEMO_PASSWORD }}，点击填充）</div>
+        <button
+          type="button"
+          class="demo-chip"
+          :class="{ filled: username === tabAccount.username }"
+          @click="fillAccount"
+        >
+          <span class="demo-name">{{ tabAccount.name }}</span>
+          <span class="demo-desc">{{ tabAccount.desc }}</span>
+        </button>
       </div>
-    </section>
+
+      <div class="card-sec">🛡 安全登录 · 隐私保护 · 审计追踪</div>
+    </div>
+
+    <footer class="page-foot">
+      <span>🔒 本系统为内部业务系统，所有操作将被记录并纳入审计</span>
+      <span class="foot-copy">© 2026 智汇工作台 v1.0.0 · 京ICP备20260088号</span>
+    </footer>
   </div>
 </template>
 
 <style scoped>
-/* 骨架：左右分栏——左品牌深蓝、右表单白底，占满 topbar 以下全部空间 */
+/* 骨架：深蓝科技感全域背景；品牌大标题与能力胶囊在页面上，白卡只装表单 */
 .login-page {
   height: 100%;
-  display: flex;
-  overflow: hidden;
-}
-
-/* ============ 左侧品牌区 ============ */
-.brand-pane {
-  flex: 0 0 46%;
-  max-width: 620px;
+  box-sizing: border-box;
   position: relative;
+  overflow: auto;
   display: flex;
   flex-direction: column;
-  padding: 36px 48px 28px;
-  color: #fff;
-  overflow: hidden;
-  background: linear-gradient(158deg, #0e3a75 0%, #0b4f9e 48%, #1a63bd 100%);
-}
-/* 装饰：右上/左下柔光，增强品牌纵深 */
-.brand-pane::before {
-  content: '';
-  position: absolute;
-  right: -160px;
-  top: -160px;
-  width: 460px;
-  height: 460px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.14) 0%, transparent 65%);
-  pointer-events: none;
-}
-.brand-pane::after {
-  content: '';
-  position: absolute;
-  left: -120px;
-  bottom: -180px;
-  width: 420px;
-  height: 420px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.08) 0%, transparent 60%);
-  pointer-events: none;
-}
-
-.brand-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  position: relative;
-  z-index: 1;
-}
-.logo-mark {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  background: #fff;
-  color: #0b4f9e;
-  font-size: 19px;
-  font-weight: 800;
-  display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  gap: 18px;
+  padding: 26px 20px;
+  background:
+    radial-gradient(900px 500px at 50% -10%, rgba(88, 112, 212, 0.35) 0%, transparent 60%),
+    radial-gradient(700px 460px at 100% 100%, rgba(64, 78, 168, 0.4) 0%, transparent 55%),
+    linear-gradient(168deg, #141c46 0%, #1b2458 48%, #232e6e 100%);
 }
-.brand-name {
-  font-size: 16.5px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-}
-
-.brand-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  position: relative;
-  z-index: 1;
-  padding: 20px 0;
-}
-.brand-eyebrow {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 6px;
-  color: rgba(255, 255, 255, 0.66);
-  margin-bottom: 8px;
-}
-.brand-title {
-  margin: 0 0 12px;
-  font-size: 29px;
-  line-height: 1.38;
-  font-weight: 700;
-  letter-spacing: 1px;
-}
-.brand-desc {
-  margin: 0 0 26px;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.78);
-  line-height: 1.7;
-}
-
-/* 平台能力概览：泛化能力卡片，不暴露具体业务应用 */
-.app-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 11px;
-  margin-bottom: 28px;
-}
-.app-card {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  padding: 12px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(2px);
-  transition: transform 0.15s, background 0.15s, border-color 0.15s;
-}
-.app-card:hover {
-  transform: translateY(-2px);
-  background: rgba(255, 255, 255, 0.13);
-  border-color: rgba(255, 255, 255, 0.35);
-}
-.app-icon {
-  flex: none;
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.26);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 19px;
-  color: rgba(255, 255, 255, 0.95);
-}
-.app-meta {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.app-name {
-  font-size: 14.5px;
-  font-weight: 700;
-}
-.app-type {
-  font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.62);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.app-status {
-  flex: none;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 9px;
-  border-radius: 999px;
-}
-.app-status.run {
-  color: #7ee2a8;
-  background: rgba(46, 160, 90, 0.25);
-  border: 1px solid rgba(126, 226, 168, 0.4);
-}
-.app-status.building {
-  color: #ffd88a;
-  background: rgba(191, 138, 32, 0.25);
-  border: 1px solid rgba(255, 216, 138, 0.4);
-}
-.app-status.ready {
-  color: #9ecbff;
-  background: rgba(64, 120, 200, 0.3);
-  border: 1px solid rgba(158, 203, 255, 0.45);
-}
-
-/* 统计：无边框三列，标签在上、数字在下 */
-.brand-stats {
-  display: flex;
-  align-items: center;
-  gap: 28px;
-}
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.stat-label {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.66);
-}
-.stat-num {
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-}
-.stat-line {
-  width: 1px;
-  height: 30px;
-  background: rgba(255, 255, 255, 0.25);
-}
-
-.brand-foot {
-  position: relative;
-  z-index: 1;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
-}
-
-/* ============ 右侧表单区 ============ */
-.form-pane {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background: #fbfcfe;
-  min-width: 0;
-  position: relative;
-  z-index: 0;
-}
-/* 装饰：右下同心圆环，给表单区一点空间感 */
-.form-pane::before,
-.form-pane::after {
-  content: '';
+.mesh {
   position: absolute;
-  border-radius: 50%;
-  border: 1px solid #e6ebf3;
-  z-index: -1;
   pointer-events: none;
+  opacity: 0.8;
 }
-.form-pane::before {
-  right: -110px;
-  bottom: -110px;
-  width: 340px;
-  height: 340px;
-}
-.form-pane::after {
-  right: -40px;
-  bottom: -40px;
-  width: 200px;
-  height: 200px;
-}
-.form-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 28px 0;
-}
-.form-top-hint {
-  border: none;
-  background: transparent;
-  padding: 0;
-  font-size: 12.5px;
-  color: #3a76d6;
-  cursor: pointer;
-}
-.form-top-hint:hover { text-decoration: underline; }
+.mesh-tl { left: 0; top: 0; }
+.mesh-br { right: 0; bottom: 0; }
+
 .env-tag {
+  position: absolute;
+  top: 18px;
+  left: 22px;
+  z-index: 2;
   font-size: 12px;
-  color: #0a8f3c;
-  background: #e8f7ee;
-  border: 1px solid #b7e2c6;
+  color: #7ee2a8;
+  background: rgba(46, 160, 90, 0.18);
+  border: 1px solid rgba(126, 226, 168, 0.4);
   border-radius: 4px;
   padding: 2px 8px;
   font-weight: 600;
 }
+.apply-hint {
+  position: absolute;
+  top: 16px;
+  right: 24px;
+  z-index: 2;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+}
+.apply-hint:hover { color: #fff; text-decoration: underline; }
 
-.form-body {
-  flex: 1;
+/* ============ 品牌区（页面上） ============ */
+.hero {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+}
+.hero-title {
+  margin: 0 0 10px;
+  font-size: 46px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #fff;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+}
+.hero-sub {
+  margin: 0 0 18px;
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.85);
+  letter-spacing: 1px;
+}
+.hero-pills {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  width: 384px;
-  margin: 0 auto;
-  padding: 12px 0;
+  gap: 10px;
 }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  padding: 7px 14px;
+  backdrop-filter: blur(4px);
+  white-space: nowrap;
+}
+.pill .el-icon { font-size: 14px; }
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-left: 2px;
+}
+.dot.g { background: #34d399; box-shadow: 0 0 6px rgba(52, 211, 153, 0.8); }
+.dot.y { background: #fbbf24; box-shadow: 0 0 6px rgba(251, 191, 36, 0.8); }
+.dot.b { background: #60a5fa; box-shadow: 0 0 6px rgba(96, 165, 250, 0.8); }
+.sep { color: rgba(255, 255, 255, 0.4); }
 
-.login-title {
-  margin: 0 0 6px;
-  font-size: 26px;
+/* ============ 登录白卡 ============ */
+.login-card {
+  position: relative;
+  z-index: 1;
+  width: min(560px, 100%);
+  box-sizing: border-box;
+  background: #fff;
+  border-radius: 16px;
+  padding: 26px 32px 18px;
   color: #12263f;
+  box-shadow: 0 24px 64px rgba(4, 10, 40, 0.45);
 }
-.login-sub {
-  margin: 0 0 22px;
+.card-title {
+  margin: 0 0 4px;
+  font-size: 23px;
+  font-weight: 700;
+}
+.card-sub {
+  margin: 0 0 16px;
   font-size: 13px;
   color: #8a97a8;
 }
 
-/* 身份选项卡：分段式，激活项品牌蓝 */
+/* 身份选项卡：分段控件，浅灰容器 + 激活蓝块 */
 .tab-bar {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
-  overflow: hidden;
-  margin-bottom: 18px;
-  background: #fff;
+  gap: 4px;
+  background: #eef0f4;
+  border-radius: 10px;
+  padding: 4px;
+  margin-bottom: 16px;
 }
 .tab-item {
   padding: 9px 0;
-  font-size: 13px;
-  background: #fff;
+  font-size: 13.5px;
+  background: transparent;
   color: #5a6b80;
   border: none;
+  border-radius: 8px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
-.tab-item + .tab-item {
-  border-left: 1px solid #e5e8ec;
-}
-.tab-item:hover { background: #f2f7fc; }
+.tab-item:hover { background: rgba(255, 255, 255, 0.9); }
 .tab-item.active {
   background: #1265e0;
   color: #fff;
   font-weight: 600;
+  box-shadow: 0 2px 6px rgba(18, 101, 224, 0.35);
 }
 
-/* 表单 */
+/* 表单：浅灰填充式输入框 */
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.field-label {
-  font-size: 12.5px;
-  color: #5a6b80;
-  font-weight: 600;
-}
-/* 输入框：白底 + 浅灰描边 + 4px 圆角 + 左侧语义图标，聚焦品牌蓝 + 浅蓝外发光 */
-.field-input {
-  height: 42px;
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
-  padding: 0 12px;
-  font-size: 14px;
-  color: #12263f;
-  background: #fff;
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.field-input.has-leading-icon {
-  padding-left: 38px;
-}
-.field-input::placeholder { color: #b3bec9; }
-.field-input:focus {
-  border-color: #1265e0;
-  box-shadow: 0 0 0 3px rgba(18, 101, 224, 0.12);
-}
-/* 浏览器自动填充会把输入框染成淡蓝色：强制回填白色底、正常字色 */
-.field-input:-webkit-autofill,
-.field-input:-webkit-autofill:hover,
-.field-input:-webkit-autofill:focus {
-  -webkit-box-shadow: 0 0 0 1000px #fff inset;
-  -webkit-text-fill-color: #12263f;
-  caret-color: #12263f;
-  transition: background-color 9999s ease-in-out 0s;
-}
-
 .input-wrap {
   position: relative;
   display: block;
 }
+.field-input {
+  height: 44px;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 0 42px 0 40px;
+  font-size: 14px;
+  color: #12263f;
+  background: #f2f4f8;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.field-input::placeholder { color: #9aa6b5; }
+.field-input:focus {
+  background: #fff;
+  border-color: #1265e0;
+  box-shadow: 0 0 0 3px rgba(18, 101, 224, 0.12);
+}
+/* 浏览器自动填充会覆盖填充底色：回填浅灰底、正常字色 */
+.field-input:-webkit-autofill,
+.field-input:-webkit-autofill:hover,
+.field-input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #f2f4f8 inset;
+  -webkit-text-fill-color: #12263f;
+  caret-color: #12263f;
+  transition: background-color 9999s ease-in-out 0s;
+}
 .input-icon {
   position: absolute;
-  left: 13px;
+  left: 14px;
   top: 50%;
   transform: translateY(-50%);
   font-size: 15px;
-  color: #98a2b0;
+  color: #7c8aa0;
   pointer-events: none;
 }
-.input-wrap .field-input:focus ~ .input-icon,
 .input-wrap:focus-within .input-icon { color: #1265e0; }
-
-/* 密码框眼睛切换 */
 .eye-btn {
   position: absolute;
-  right: 5px;
+  right: 6px;
   top: 50%;
   transform: translateY(-50%);
   width: 32px;
@@ -642,9 +441,9 @@ function notAvailable(feature: string) {
   justify-content: center;
   border: none;
   background: transparent;
-  color: #98a2b0;
+  color: #7c8aa0;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 8px;
 }
 .eye-btn:hover { color: #1265e0; }
 
@@ -685,32 +484,31 @@ function notAvailable(feature: string) {
   color: #c0392b;
   background: #fdeeec;
   border: 1px solid #f5c6c0;
-  border-radius: 4px;
+  border-radius: 8px;
   padding: 7px 10px;
 }
 
-/* 登录按钮 + loading 态 */
+/* 登录按钮：品牌蓝渐变 */
 .submit-btn {
-  height: 44px;
-  margin-top: 4px;
+  height: 46px;
   border: none;
-  border-radius: 4px;
-  background: #1265e0;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #2f7bff 0%, #1265e0 100%);
   color: #fff;
   font-size: 15px;
   font-weight: 600;
-  letter-spacing: 4px;
+  letter-spacing: 6px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  box-shadow: 0 2px 6px rgba(18, 101, 224, 0.28);
-  transition: background 0.15s, box-shadow 0.15s;
+  box-shadow: 0 6px 16px rgba(24, 96, 210, 0.35);
+  transition: filter 0.15s, box-shadow 0.15s;
 }
 .submit-btn:hover {
-  background: #0e56c4;
-  box-shadow: 0 3px 8px rgba(18, 101, 224, 0.34);
+  filter: brightness(1.06);
+  box-shadow: 0 8px 20px rgba(24, 96, 210, 0.42);
 }
 .submit-btn:disabled { opacity: 0.65; cursor: not-allowed; }
 .spinner {
@@ -730,7 +528,7 @@ function notAvailable(feature: string) {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 20px 0 12px;
+  margin: 16px 0 10px;
   color: #98a2b0;
   font-size: 12px;
 }
@@ -739,7 +537,7 @@ function notAvailable(feature: string) {
   content: '';
   flex: 1;
   height: 1px;
-  background: #e5e8ec;
+  background: #e8ecf1;
 }
 .alt-list {
   display: grid;
@@ -750,32 +548,32 @@ function notAvailable(feature: string) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  height: 36px;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
-  background: #fff;
-  color: #4a5a6d;
-  font-size: 12.5px;
+  gap: 6px;
+  height: 38px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: #f2f4f8;
+  color: #33475e;
+  font-size: 13px;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .alt-btn:hover {
+  background: #fff;
   border-color: #1265e0;
   color: #1265e0;
-  background: #f5f9ff;
 }
 
 /* 测试账号：跟随选项卡，单卡填充 + 选中高亮 */
 .demo-area {
-  margin-top: 18px;
+  margin-top: 14px;
   border-top: 1px dashed #e0e6ee;
-  padding-top: 12px;
+  padding-top: 10px;
 }
 .demo-caption {
-  font-size: 12px;
+  font-size: 11.5px;
   color: #98a2b0;
-  margin-bottom: 8px;
+  margin-bottom: 7px;
 }
 .demo-chip {
   width: 100%;
@@ -784,8 +582,8 @@ function notAvailable(feature: string) {
   gap: 8px;
   border: 1px solid #e5e8ec;
   background: #fafcfe;
-  border-radius: 4px;
-  padding: 8px 12px;
+  border-radius: 8px;
+  padding: 7px 12px;
   cursor: pointer;
   font-size: 12.5px;
   text-align: left;
@@ -806,29 +604,36 @@ function notAvailable(feature: string) {
 }
 .demo-desc { color: #8a97a8; }
 
-/* 底部安全提示：银行内部系统标配（浅蓝胶囊） */
-.form-foot {
-  display: flex;
-  justify-content: center;
-  padding: 14px 20px 18px;
-}
-.security-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+/* 卡内安全标语 */
+.card-sec {
+  margin-top: 13px;
+  text-align: center;
   font-size: 12px;
-  color: #4a5a6d;
-  background: #eef4fd;
-  border: 1px solid #d7e5fa;
-  border-radius: 999px;
-  padding: 7px 16px;
+  color: #8a97a8;
 }
 
-/* 窄屏：隐藏品牌区，表单占满 */
-@media (max-width: 960px) {
-  .brand-pane { display: none; }
-  .form-body {
-    width: min(420px, calc(100% - 48px));
-  }
+/* 页脚：安全提示 + 版权 */
+.page-foot {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  text-align: center;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.78);
+}
+.foot-copy {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* 窄屏：能力胶囊换行、卡片贴边 */
+@media (max-width: 640px) {
+  .hero-title { font-size: 34px; }
+  .hero-pills { flex-wrap: wrap; }
+  .sep { display: none; }
+  .login-card { padding: 22px 20px 14px; }
 }
 </style>
