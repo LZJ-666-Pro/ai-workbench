@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
-import { Bell } from '@element-plus/icons-vue'
+import { ArrowDown, Bell } from '@element-plus/icons-vue'
 import { auth, logout, roleLabel } from './api/auth'
 
 const route = useRoute()
@@ -39,6 +39,17 @@ const navLinks = computed(() => {
   return allLinks
 })
 
+/** 顶栏用户下拉：管理后台（仅 ADMIN）与退出登录 */
+function onUserCommand(command: string) {
+  if (command === 'admin') {
+    router.push('/admin')
+    return
+  }
+  if (command === 'logout') {
+    confirmLogout()
+  }
+}
+
 /** 顶栏用户胶囊：点击退出登录 */
 async function confirmLogout() {
   try {
@@ -61,32 +72,42 @@ async function confirmLogout() {
     <nav v-if="navLinks.length">
       <RouterLink v-for="link in navLinks" :key="link.to" :to="link.to">{{ link.label }}</RouterLink>
     </nav>
-    <div v-if="route.path === '/'" class="home-extras">
-      <el-popover placement="bottom-end" :width="300" trigger="click">
-        <template #reference>
-          <el-badge :value="3" :offset="[-4, 4]" class="bell-wrap">
-            <el-icon class="bell"><Bell /></el-icon>
-          </el-badge>
+    <!-- 右上角操作区：通知铃铛 · 环境胶囊 · 用户头像下拉（参照企业控制台样式） -->
+    <div class="top-right">
+      <template v-if="route.path === '/'">
+        <el-popover placement="bottom-end" :width="300" trigger="click">
+          <template #reference>
+            <el-badge :value="3" :offset="[-4, 4]" class="bell-wrap">
+              <el-icon class="bell"><Bell /></el-icon>
+            </el-badge>
+          </template>
+          <div class="notif-title">通知中心</div>
+          <div class="notif-item">
+            <span class="notif-dot warn" />转账审批：星辰科技 ¥380,000 待审批
+          </div>
+          <div class="notif-item">
+            <span class="notif-dot" />风控黑名单更新：62220004 已加入拦截
+          </div>
+          <div class="notif-item">
+            <span class="notif-dot" />平台公告：今晚 02:00 - 02:30 例行维护
+          </div>
+        </el-popover>
+        <span class="env-tag"><i class="env-dot" />生产环境</span>
+      </template>
+      <el-dropdown v-if="auth.user" trigger="click" @command="onUserCommand">
+        <span class="user-chip user-chip-link" title="账号菜单">
+          <span class="avatar">{{ auth.user.displayName.charAt(0) }}</span>
+          <span class="user-name">{{ auth.user.displayName }} · {{ roleLabel(auth.user.platformRole) }}</span>
+          <el-icon class="caret"><ArrowDown /></el-icon>
+        </span>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item v-if="auth.user.platformRole === 'ADMIN'" command="admin">📊 管理后台</el-dropdown-item>
+            <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
+          </el-dropdown-menu>
         </template>
-        <div class="notif-title">通知中心</div>
-        <div class="notif-item">
-          <span class="notif-dot warn" />转账审批：星辰科技 ¥380,000 待审批
-        </div>
-        <div class="notif-item">
-          <span class="notif-dot" />风控黑名单更新：62220004 已加入拦截
-        </div>
-        <div class="notif-item">
-          <span class="notif-dot" />平台公告：今晚 02:00 - 02:30 例行维护
-        </div>
-      </el-popover>
-      <span class="env-tag">生产环境</span>
+      </el-dropdown>
     </div>
-    <span
-      v-if="auth.user"
-      class="user-chip user-chip-link"
-      title="点击退出登录"
-      @click="confirmLogout"
-    >👤 {{ auth.user.displayName }} · {{ roleLabel(auth.user.platformRole) }}</span>
   </header>
   <main class="main" :class="{ flush: isChatRoute, wide: isWideRoute, 'no-top': route.path === '/login' }">
     <RouterView />
@@ -94,13 +115,54 @@ async function confirmLogout() {
 </template>
 
 <style scoped>
-/* 可点击的用户胶囊：与全局 .user-chip 样式衔接，补充交互态 */
+/* 右上角操作区：铃铛 / 环境胶囊 / 用户菜单成组靠右 */
+.top-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+/* 环境胶囊：绿点 + 文字，圆角胶囊 */
+.env-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+.env-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #0a8f3c;
+  box-shadow: 0 0 0 3px rgba(10, 143, 60, 0.15);
+}
+/* 可点击的用户胶囊：头像 + 姓名 + 下拉箭头 */
 .user-chip-link {
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
+  gap: 9px;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .user-chip-link:hover {
   border-color: #9fbcd9;
-  color: #0b4f9e;
+  box-shadow: 0 2px 8px rgba(11, 79, 158, 0.12);
+}
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2f7bff, #0b4f9e);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.user-name {
+  font-size: 12.5px;
+}
+.caret {
+  font-size: 12px;
+  color: #8a9099;
 }
 </style>

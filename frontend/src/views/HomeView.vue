@@ -1,20 +1,27 @@
 <template>
   <section class="portal">
-    <!-- 顶部上下文区：租户信息 + 平台底座能力（一行内联） -->
-    <div class="context-panel">
-      <h1>{{ greeting }}，{{ auth.user?.displayName ?? '用户' }}</h1>
-      <p class="tenant-line">
-        智汇银行（总行） · {{ roleLabel(auth.user?.platformRole) }} · <span class="env-tag">生产环境</span>
-      </p>
-      <div class="cap-row">
-        <span class="cap"><el-icon><Lightning /></el-icon>LLM 接入<span class="cap-badge">4 个模型</span></span>
-        <span class="sep">·</span>
-        <span class="cap"><el-icon><Connection /></el-icon>SSE 流式<span class="cap-badge">320ms</span></span>
-        <span class="sep">·</span>
-        <span class="cap"><el-icon><Cpu /></el-icon>会话记忆<span class="cap-badge">32k</span></span>
-        <span class="sep">·</span>
-        <span class="cap"><el-icon><SetUp /></el-icon>工具框架<span class="cap-badge">12 个</span></span>
+    <!-- 品牌英雄区：深蓝渐变呼应登录页，问候 + 玻璃能力胶囊 -->
+    <div class="hero">
+      <svg class="mesh" width="300" height="220" viewBox="0 0 300 220" fill="none" aria-hidden="true">
+        <circle cx="36" cy="48" r="3" fill="rgba(255,255,255,.5)" />
+        <circle cx="130" cy="26" r="2" fill="rgba(255,255,255,.35)" />
+        <circle cx="210" cy="80" r="2.5" fill="rgba(255,255,255,.4)" />
+        <circle cx="80" cy="140" r="2" fill="rgba(255,255,255,.3)" />
+        <path d="M36 48 L130 26 L210 80 L80 140 Z" stroke="rgba(255,255,255,.14)" fill="none" />
+      </svg>
+      <div class="hero-main">
+        <h1>{{ greeting }}，{{ auth.user?.displayName ?? '用户' }}</h1>
+        <p class="tenant-line">
+          智汇银行（总行） · {{ roleLabel(auth.user?.platformRole) }} · <span class="env-tag">生产环境</span>
+        </p>
+        <div class="cap-row">
+          <span class="cap"><el-icon><Lightning /></el-icon>LLM 接入<b>4 个模型</b></span>
+          <span class="cap"><el-icon><Connection /></el-icon>SSE 流式<b>320ms</b></span>
+          <span class="cap"><el-icon><Cpu /></el-icon>会话记忆<b>32k</b></span>
+          <span class="cap"><el-icon><SetUp /></el-icon>工具框架<b>12 个</b></span>
+        </div>
       </div>
+      <div class="hero-mark" aria-hidden="true">智</div>
     </div>
 
     <!-- 应用入口卡片区：2 × 2 大卡片撑满视口 -->
@@ -22,7 +29,7 @@
     <div class="app-grid">
       <div v-for="app in apps" :key="app.key" class="app-card">
         <div class="app-head">
-          <el-icon class="app-icon"><component :is="app.icon" /></el-icon>
+          <span class="app-tile" :class="app.tone"><el-icon class="app-icon"><component :is="app.icon" /></el-icon></span>
           <span class="app-name">{{ app.name }}</span>
           <span class="status" :class="app.status"><i class="dot" />{{ app.statusText }}</span>
         </div>
@@ -127,6 +134,8 @@ interface AppCard {
   icon: object
   name: string
   type: string
+  /** 图标瓷砖色系：每个应用一个品牌色 */
+  tone: 'blue' | 'violet' | 'green'
   status: 'running' | 'building' | 'ready'
   statusText: string
   metrics: { label: string; value: string }[]
@@ -135,7 +144,7 @@ interface AppCard {
 
 const apps: AppCard[] = [
   {
-    key: 'bank', icon: OfficeBuilding, name: '银行助手「小银」',
+    key: 'bank', icon: OfficeBuilding, name: '银行助手「小银」', tone: 'blue',
     type: '交易型 Agent · 工具调用 + 流式对话，支持转账确认卡片、幂等与全程审计',
     status: 'running', statusText: '运行中',
     metrics: [
@@ -146,7 +155,7 @@ const apps: AppCard[] = [
     to: '/bank',
   },
   {
-    key: 'knowledge', icon: Collection, name: '个人知识库',
+    key: 'knowledge', icon: Collection, name: '个人知识库', tone: 'violet',
     type: '检索型 Agent · 多源路由 + RAG + 引用溯源，Phase 2 接入真实数据源',
     status: 'building', statusText: '建设中',
     metrics: [
@@ -156,7 +165,7 @@ const apps: AppCard[] = [
     to: '/knowledge',
   },
   {
-    key: 'interview', icon: Microphone, name: '面试模拟器',
+    key: 'interview', icon: Microphone, name: '面试模拟器', tone: 'green',
     type: '流程型 Agent · 结构化评分与评估报告，Phase 3 加入简历 RAG',
     status: 'ready', statusText: '可对话',
     metrics: [
@@ -185,62 +194,89 @@ const apps: AppCard[] = [
   flex-direction: column;
 }
 
-/* 顶部上下文区：问候语在上、能力条贴底，浅蓝灰底面板 */
-.context-panel {
-  background: #f5f8fc;
-  border: 1px solid #e5e8ec;
-  border-radius: 6px;
-  padding: 20px 24px 16px;
-  margin-bottom: 24px;
-  min-height: 150px;
+/* 品牌英雄区：深蓝渐变 + 星点装饰 + 右侧水印，呼应登录页 */
+.hero {
+  position: relative;
+  overflow: hidden;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   justify-content: space-between;
+  background:
+    radial-gradient(620px 300px at 85% -20%, rgba(255, 255, 255, 0.15) 0%, transparent 60%),
+    linear-gradient(160deg, #0d376e 0%, #0b4f9e 55%, #1560b8 100%);
+  border-radius: 10px;
+  padding: 26px 32px;
+  margin-bottom: 24px;
+  color: #fff;
 }
-.context-panel h1 {
-  font-size: 20px;
-  margin: 0 0 6px;
-  color: #12263f;
+.hero .mesh {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  opacity: 0.8;
+}
+.hero h1 {
+  margin: 0 0 8px;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
 }
 .tenant-line {
   margin: 0;
-  color: #5a6b80;
-  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13.5px;
 }
 .env-tag {
   font-size: 12px;
-  color: #0a8f3c;
-  background: #e8f7ee;
-  border: 1px solid #b7e2c6;
+  color: #7ee2a8;
+  background: rgba(46, 160, 90, 0.2);
+  border: 1px solid rgba(126, 226, 168, 0.4);
   border-radius: 4px;
   padding: 2px 8px;
   font-weight: 600;
 }
-/* 能力条：一行内联，贴底展示；关键数字加粗深色 */
+/* 能力胶囊：玻璃质感，与登录页同语言 */
 .cap-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px 14px;
-  font-size: 12.5px;
-  color: #7a8798;
+  gap: 10px;
+  margin-top: 18px;
 }
 .cap {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  padding: 6px 14px;
+  backdrop-filter: blur(4px);
+  white-space: nowrap;
 }
-/* 数字指标做成浅蓝底 badge，与功能名分层 */
-.cap-badge {
-  background: #e9f1f9;
-  color: #0b4f9e;
-  font-weight: 600;
-  font-size: 12px;
-  border-radius: 4px;
-  padding: 2px 8px;
+.cap b {
+  font-weight: 700;
+  color: #fff;
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
 }
-.cap .el-icon { color: #0b4f9e; font-size: 15px; }
-.sep { color: #c3ccd8; }
+.cap .el-icon { color: #9cc4ff; font-size: 14px; }
+.hero-mark {
+  position: absolute;
+  right: 30px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 150px;
+  font-weight: 800;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.07);
+  user-select: none;
+  pointer-events: none;
+}
 
 /* 应用中心：2 × 2 大卡片，行等高、区域撑满剩余视口 */
 .section-title {
@@ -273,16 +309,45 @@ const apps: AppCard[] = [
   min-height: 260px;
   background: #fff;
   border: 1px solid #e5e8ec;
-  border-radius: 6px;
+  border-radius: 10px;
   padding: 18px 22px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.app-card:hover {
+  transform: translateY(-3px);
+  border-color: #9fc3e8;
+  box-shadow: 0 10px 24px rgba(11, 79, 158, 0.12);
 }
 .app-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
-.app-icon { font-size: 21px; color: #0b4f9e; flex-shrink: 0; }
+/* 图标瓷砖：每个应用一个品牌色渐变 */
+.app-tile {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+}
+.app-tile .app-icon { font-size: 20px; color: #fff; }
+.app-tile.blue {
+  background: linear-gradient(135deg, #2f7bff, #0b4f9e);
+  box-shadow: 0 4px 10px rgba(11, 79, 158, 0.25);
+}
+.app-tile.violet {
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  box-shadow: 0 4px 10px rgba(109, 40, 217, 0.25);
+}
+.app-tile.green {
+  background: linear-gradient(135deg, #10b981, #047857);
+  box-shadow: 0 4px 10px rgba(4, 120, 87, 0.25);
+}
 .app-name { font-size: 16px; font-weight: 700; color: #1f2d3d; flex: 1; }
 .status {
   display: inline-flex;
