@@ -10,7 +10,8 @@ public class RagProperties {
 
     private boolean enabled = false;
     private String host = "localhost";
-    private int port = 5432;
+    /** 宿主机端口 15432：本机 PostgreSQL 18 服务占用 5432，容器映射改为 15432:5432 */
+    private int port = 15432;
     private String database = "ai_workbench_vec";
     private String user = "postgres";
     private String password = "ai123456";

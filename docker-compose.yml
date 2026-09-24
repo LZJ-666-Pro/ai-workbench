@@ -19,6 +19,7 @@ services:
       - "6379:6379"
 
   # Phase 2 RAG 向量库，现在先备着
+  # 宿主机用 15432：本机装有 PostgreSQL 18 服务占用 5432，避免端口冲突
   postgres:
     image: pgvector/pgvector:pg16
     container_name: aiwb-pgvector
@@ -26,7 +27,7 @@ services:
       POSTGRES_PASSWORD: ai123456
       POSTGRES_DB: ai_workbench_vec
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
 
