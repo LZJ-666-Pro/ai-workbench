@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
 import { Bell } from '@element-plus/icons-vue'
+import { auth, logout, roleLabel } from './api/auth'
 
 const route = useRoute()
-/** 三个助手页与管理后台是全屏工作区，不走 .main 的限宽布局 */
+const router = useRouter()
+/** 聊天工作区/后台/登录页是全屏布局，不走 .main 的限宽布局 */
 const isChatRoute = computed(() =>
-  ['/bank', '/knowledge', '/interview', '/admin'].some(p => route.path.startsWith(p)),
+  ['/bank', '/knowledge', '/interview', '/admin', '/login'].some(p => route.path.startsWith(p)),
 )
 
 const isAdminRoute = computed(() => route.path.startsWith('/admin'))
@@ -35,10 +38,25 @@ const navLinks = computed(() => {
   }
   return allLinks
 })
+
+/** 顶栏用户胶囊：点击退出登录 */
+async function confirmLogout() {
+  try {
+    await ElMessageBox.confirm('确定要退出登录吗？', '退出登录', {
+      confirmButtonText: '退出',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  logout()
+  router.push('/login')
+}
 </script>
 
 <template>
-  <header class="topbar">
+  <header v-if="route.path !== '/login'" class="topbar">
     <RouterLink to="/" class="brand">🧠 智汇工作台</RouterLink>
     <nav v-if="navLinks.length">
       <RouterLink v-for="link in navLinks" :key="link.to" :to="link.to">{{ link.label }}</RouterLink>
@@ -62,11 +80,27 @@ const navLinks = computed(() => {
         </div>
       </el-popover>
       <span class="env-tag">生产环境</span>
-      <span class="user-chip">👤 张三 · 总行管理员</span>
     </div>
-    <div v-else-if="isAdminRoute" class="role-chip">👔 当前角色：总行管理员</div>
+    <span
+      v-if="auth.user"
+      class="user-chip user-chip-link"
+      title="点击退出登录"
+      @click="confirmLogout"
+    >👤 {{ auth.user.displayName }} · {{ roleLabel(auth.user.platformRole) }}</span>
   </header>
   <main class="main" :class="{ flush: isChatRoute, wide: isWideRoute }">
     <RouterView />
   </main>
 </template>
+
+<style scoped>
+/* 可点击的用户胶囊：与全局 .user-chip 样式衔接，补充交互态 */
+.user-chip-link {
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.user-chip-link:hover {
+  border-color: #9fbcd9;
+  color: #0b4f9e;
+}
+</style>

@@ -30,6 +30,8 @@ const props = withDefaults(defineProps<{
   suggestions?: Suggestion[]
   /** 启用多服务对象身份切换（银行助手专属：零售客户/内部员工/对公客户） */
   enableIdentity?: boolean
+  /** 登录绑定的身份 ID：传入时锁定为该身份（不显示切换器），身份来自平台登录态 */
+  identity?: string
   /** 主题类名（如 theme-bank 企业银行主题），加在组件根元素上，不传用默认主题 */
   theme?: string
   /** 侧栏业务功能区（企业网银菜单式入口：点击发送对应指令；disabled 项置灰展示） */
@@ -102,14 +104,16 @@ const heroSuggestions = computed<Suggestion[]>(() => {
 })
 
 onMounted(async () => {
-  // 多服务对象模式：先定身份（localStorage 记住上次选择），会话与提示词都按身份隔离
+  // 多服务对象模式：先定身份（登录用户身份被 props.identity 锁定；旧模式用 localStorage 记住选择），
+  // 会话与提示词都按身份隔离
   if (props.enableIdentity) {
     try {
       identityList.value = await listIdentities(props.basePath)
     } catch { /* 接口不可用时退化为无身份模式 */ }
-    currentIdentityId.value = getIdentity(props.agent)
+    currentIdentityId.value = props.identity
+      ?? getIdentity(props.agent)
       ?? (identityList.value.length ? identityList.value[0].id : '')
-    if (currentIdentityId.value) {
+    if (!props.identity && currentIdentityId.value) {
       setIdentity(props.agent, currentIdentityId.value)
     }
   }
@@ -226,24 +230,6 @@ function newSession() {
   // 立即在侧栏顶部出现"新对话"记录（此刻还未落库，不查 DB 以免把它冲掉）
   sessions.value = sessions.value.filter(s => s.label !== '新对话')
   sessions.value.unshift({ memoryId, label: '新对话', lastTime: new Date().toISOString(), active: true })
-  scrollBottom()
-}
-
-/** 切换服务对象身份：中断进行中的回复，清空工作区，按新身份重建会话与列表 */
-function switchIdentity(id: string) {
-  if (id === currentIdentityId.value) return
-  controller?.abort()
-  controller = null
-  streaming.value = false
-  setIdentity(props.agent, id)
-  currentIdentityId.value = id
-  messages.value = []
-  menuFor.value = null
-  pendingDelete.value = null
-  // 当前会话属于旧身份，getMemoryId 检测到前缀不匹配会自动开新会话
-  memoryId = getMemoryId(props.agent, id)
-  sessions.value = []
-  loadSessions()
   scrollBottom()
 }
 
@@ -387,17 +373,7 @@ function formatTime(timestamp: string): string {
     <!-- 侧边栏：会话列表 -->
     <aside class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar-inner">
-        <!-- 多服务对象：身份选择器（零售客户/内部员工/对公客户） -->
-        <div v-if="enableIdentity && identityList.length" class="identity-bar">
-          <span class="identity-label">服务对象</span>
-          <select
-            class="identity-select"
-            :value="currentIdentityId"
-            @change="switchIdentity(($event.target as HTMLSelectElement).value)"
-          >
-            <option v-for="i in identityList" :key="i.id" :value="i.id">{{ i.displayName }}</option>
-          </select>
-        </div>
+        <!-- 登录后身份由平台账号绑定（不再提供切换器）；身份名随欢迎屏展示 -->
 
         <button class="new-chat" @click="newSession">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -702,43 +678,6 @@ function formatTime(timestamp: string): string {
   background: #eef1f5;
   color: #b9c0cb;
   flex-shrink: 0;
-}
-
-/* 多服务对象：身份选择器（侧栏顶部） */
-.identity-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  padding: 0 2px;
-}
-
-.identity-label {
-  font-size: 12px;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-.identity-select {
-  flex: 1;
-  min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text);
-  font-size: 13px;
-  cursor: pointer;
-  transition: border-color 0.15s;
-}
-
-.identity-select:hover {
-  border-color: var(--accent);
-}
-
-.identity-select:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 .sidebar-caption {

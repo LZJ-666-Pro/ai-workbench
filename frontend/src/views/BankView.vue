@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ChatWindow from '../components/ChatWindow.vue'
+import { auth } from '../api/auth'
 </script>
 
 <template>
@@ -8,6 +9,7 @@ import ChatWindow from '../components/ChatWindow.vue'
     agent="bank"
     theme="theme-bank"
     enable-identity
+    :identity="auth.user?.identityId"
     title="银行助手「小银」"
     bot-name="小银"
     bot-tagline="你的智能银行管家：查余额、看交易、办转账，直接说就行"

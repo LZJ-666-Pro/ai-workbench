@@ -85,3 +85,18 @@ INSERT IGNORE INTO bank_transaction (id, account_no, amount, description) VALUES
     (103, '82280001', -11500.00, '2026-09-10 员工报销代发 -11500.00'),
     (104, '82280001', 3500.00, '2026-09-15 办公设备采购退款 +3500.00');
 
+-- 平台登录用户（登录认证）：密码存 BCrypt 哈希；identity_id 关联银行助手身份
+-- （BankIdentity.id），登录后前端用它生成 memoryId（bank:{identityId}:uuid），
+-- 后端拦截器也用它校验请求里的 memoryId 归属，防止跨身份访问他人会话。
+-- 演示账号种子由 PlatformUserSeeder 启动时写入（表空才插），密码统一 123456。
+CREATE TABLE IF NOT EXISTS platform_user (
+    id            BIGINT       AUTO_INCREMENT PRIMARY KEY,
+    username      VARCHAR(64)  NOT NULL,
+    password_hash VARCHAR(100) NOT NULL,
+    display_name  VARCHAR(64)  NOT NULL,
+    platform_role VARCHAR(16)  NOT NULL DEFAULT 'USER',  -- ADMIN（可进管理后台）/ USER
+    identity_id   VARCHAR(64)  NOT NULL,
+    created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_platform_user_username (username)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+

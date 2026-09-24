@@ -2,9 +2,9 @@
   <section class="portal">
     <!-- 顶部上下文区：租户信息 + 平台底座能力（一行内联） -->
     <div class="context-panel">
-      <h1>{{ greeting }}，张三</h1>
+      <h1>{{ greeting }}，{{ auth.user?.displayName ?? '用户' }}</h1>
       <p class="tenant-line">
-        智汇银行（总行） · 总行管理员 · <span class="env-tag">生产环境</span>
+        智汇银行（总行） · {{ roleLabel(auth.user?.platformRole) }} · <span class="env-tag">生产环境</span>
       </p>
       <div class="cap-row">
         <span class="cap"><el-icon><Lightning /></el-icon>LLM 接入<span class="cap-badge">4 个模型</span></span>
@@ -99,6 +99,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { auth, roleLabel } from '../api/auth'
 import {
   Lightning, Connection, Cpu, SetUp, OfficeBuilding, Collection,
   Microphone, Plus,

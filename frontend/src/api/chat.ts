@@ -1,3 +1,18 @@
+import { authHeaders, handleUnauthorized } from './auth'
+
+/** 统一请求入口：自动附带 Bearer token；401（登录过期）清登录态并回登录页 */
+async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  const resp = await fetch(url, {
+    ...init,
+    headers: { ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) },
+  })
+  if (resp.status === 401) {
+    handleUnauthorized()
+    throw new Error('登录已过期，请重新登录')
+  }
+  return resp
+}
+
 export interface ChatEvent {
   type: 'delta' | 'done' | 'error' | 'confirm_request'
   content?: string
@@ -94,7 +109,7 @@ export async function loadHistoryMessages(
   agent: string,
   memoryId: string,
 ): Promise<HistoryMsg[]> {
-  const resp = await fetch(`${basePath}/api/memory/${agent}/${encodeURIComponent(memoryId)}`)
+  const resp = await apiFetch(`${basePath}/api/memory/${agent}/${encodeURIComponent(memoryId)}`)
   if (!resp.ok) {
     // 抛错让调用方走本地缓存兜底，而不是把"后端不可用"当成"没有历史"
     throw new Error(`加载历史消息失败: HTTP ${resp.status}`)
@@ -113,7 +128,7 @@ export interface IdentityInfo {
 
 /** 从后端拉取可选身份列表（仅启用多服务对象的应用有该接口） */
 export async function listIdentities(basePath: string): Promise<IdentityInfo[]> {
-  const resp = await fetch(`${basePath}/api/bank/identities`)
+  const resp = await apiFetch(`${basePath}/api/bank/identities`)
   if (!resp.ok) {
     throw new Error(`加载身份列表失败: HTTP ${resp.status}`)
   }
@@ -132,7 +147,7 @@ export function setIdentity(agent: string, id: string) {
 /** 从数据库获取指定 Agent 的会话列表；identity 传入时按身份过滤（多服务对象隔离） */
 export async function listSessions(basePath: string, agent: string, identity?: string): Promise<SessionRecord[]> {
   const query = identity ? `?identity=${encodeURIComponent(identity)}` : ''
-  const resp = await fetch(`${basePath}/api/sessions/${agent}${query}`)
+  const resp = await apiFetch(`${basePath}/api/sessions/${agent}${query}`)
   if (!resp.ok) {
     // 抛错而不是返回空数组：调用方需要区分"没有会话"和"后端不可用"（后者要走缓存兜底）
     throw new Error(`加载会话列表失败: HTTP ${resp.status}`)
@@ -142,7 +157,7 @@ export async function listSessions(basePath: string, agent: string, identity?: s
 
 /** 删除指定会话（DB 正本删除，调用方需自行清理本地缓存） */
 export async function deleteSession(basePath: string, agent: string, memoryId: string): Promise<void> {
-  const resp = await fetch(`${basePath}/api/sessions/${agent}/${encodeURIComponent(memoryId)}`, {
+  const resp = await apiFetch(`${basePath}/api/sessions/${agent}/${encodeURIComponent(memoryId)}`, {
     method: 'DELETE',
   })
   if (!resp.ok) {
@@ -212,7 +227,7 @@ export async function respondTransferConfirm(
   confirmId: string,
   action: 'confirm' | 'cancel',
 ): Promise<{ ok: boolean; message: string }> {
-  const resp = await fetch(`${basePath}/api/transfer/confirm`, {
+  const resp = await apiFetch(`${basePath}/api/transfer/confirm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ memoryId, confirmId, action }),
@@ -246,7 +261,7 @@ export async function streamChat(opts: {
   const url = `${opts.basePath}/api/chat/${opts.agent}/stream`
     + `?memoryId=${encodeURIComponent(opts.memoryId)}`
     + `&message=${encodeURIComponent(opts.message)}`
-  const resp = await fetch(url, { signal: opts.signal })
+  const resp = await apiFetch(url, { signal: opts.signal })
   if (!resp.ok || !resp.body) {
     throw new Error(`HTTP ${resp.status}（请确认对应后端已启动）`)
   }
