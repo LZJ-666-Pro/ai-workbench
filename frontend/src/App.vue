@@ -88,7 +88,7 @@ async function confirmLogout() {
       @click="confirmLogout"
     >👤 {{ auth.user.displayName }} · {{ roleLabel(auth.user.platformRole) }}</span>
   </header>
-  <main class="main" :class="{ flush: isChatRoute, wide: isWideRoute }">
+  <main class="main" :class="{ flush: isChatRoute, wide: isWideRoute, 'no-top': route.path === '/login' }">
     <RouterView />
   </main>
 </template>

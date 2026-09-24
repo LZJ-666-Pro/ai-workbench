@@ -163,6 +163,11 @@ body {
   overflow: hidden;
 }
 
+/* 登录页没有 topbar，高度补齐整屏，避免底部露出 56px 浅色空带 */
+.main.flush.no-top {
+  height: 100vh;
+}
+
 button {
   font: inherit;
   border: 0;
