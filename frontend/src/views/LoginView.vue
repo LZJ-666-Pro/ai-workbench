@@ -236,9 +236,10 @@ function notAvailable(feature: string) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* 卡片用 auto 外边距居中，页脚 margin-top:auto 钉在视口底部 */
+  justify-content: flex-start;
   gap: 18px;
-  padding: 26px 20px;
+  padding: 26px 20px 14px;
   background:
     radial-gradient(900px 500px at 50% -10%, rgba(88, 112, 212, 0.35) 0%, transparent 60%),
     radial-gradient(700px 460px at 100% 100%, rgba(64, 78, 168, 0.4) 0%, transparent 55%),
@@ -336,6 +337,8 @@ function notAvailable(feature: string) {
   z-index: 1;
   width: min(560px, 100%);
   box-sizing: border-box;
+  /* 上下 auto 外边距：在顶栏与页脚之间的剩余空间内垂直居中 */
+  margin: auto 0;
   background: #fff;
   border-radius: 16px;
   padding: 26px 32px 18px;
@@ -616,6 +619,9 @@ function notAvailable(feature: string) {
 .page-foot {
   position: relative;
   z-index: 1;
+  /* 顶到底：吃掉卡片下方全部剩余空间，把两行页脚压到视口底部 */
+  margin-top: auto;
+  padding-bottom: 6px;
   display: flex;
   flex-direction: column;
   align-items: center;
