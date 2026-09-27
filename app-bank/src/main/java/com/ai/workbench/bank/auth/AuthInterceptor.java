@@ -10,7 +10,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -18,6 +20,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * 登录拦截器：除 /api/auth/login 外的所有 /api/** 都要求 Bearer token；
  * /api/admin/** 额外要求 ADMIN 角色；请求携带 memoryId 时校验其身份段与
  * 登录身份一致，防止 A 身份读写 B 身份的会话/转账确认单。
+ * 每次请求回库核对账号状态：停用即时生效（不等 token 过期）。
  */
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
@@ -31,10 +34,12 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     private final JwtService jwtService;
     private final ObjectMapper objectMapper;
+    private final JdbcTemplate jdbc;
 
-    public AuthInterceptor(JwtService jwtService, ObjectMapper objectMapper) {
+    public AuthInterceptor(JwtService jwtService, ObjectMapper objectMapper, JdbcTemplate jdbc) {
         this.jwtService = jwtService;
         this.objectMapper = objectMapper;
+        this.jdbc = jdbc;
     }
 
     @Override
@@ -51,6 +56,18 @@ public class AuthInterceptor implements HandlerInterceptor {
             return reject(response, 401, "登录已过期，请重新登录");
         }
         request.setAttribute(ATTR_PRINCIPAL, principal);
+
+        // 回库核对账号状态：token 未过期但账号被停用/删除时立即拒绝
+        Integer status;
+        try {
+            status = jdbc.queryForObject(
+                    "SELECT status FROM platform_user WHERE username = ?", Integer.class, principal.username());
+        } catch (EmptyResultDataAccessException e) {
+            return reject(response, 401, "账号不存在或已被删除");
+        }
+        if (status == null || status != 1) {
+            return reject(response, 403, "账号已被停用，请联系管理员");
+        }
 
         String path = request.getRequestURI();
         // 管理后台接口仅 ADMIN 可访问

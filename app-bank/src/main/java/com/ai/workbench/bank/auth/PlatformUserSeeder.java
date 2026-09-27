@@ -30,6 +30,7 @@ public class PlatformUserSeeder implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        ensureStatusColumn();
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM platform_user", Integer.class);
         if (count == null || count == 0) {
             String hash = encoder.encode(DEMO_PASSWORD);
@@ -47,6 +48,18 @@ public class PlatformUserSeeder implements ApplicationRunner {
                 jdbc.update("UPDATE platform_user SET password_hash = ? WHERE username = ?",
                         encoder.encode(DEMO_PASSWORD), username);
             }
+        }
+    }
+
+    /** 老库升级：早期版本没有 status 列，缺列时补上（MySQL 8 不支持 ADD COLUMN IF NOT EXISTS） */
+    private void ensureStatusColumn() {
+        Integer cols = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                        + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'platform_user' AND COLUMN_NAME = 'status'",
+                Integer.class);
+        if (cols == null || cols == 0) {
+            jdbc.update("ALTER TABLE platform_user ADD COLUMN status TINYINT(1) NOT NULL DEFAULT 1 "
+                    + "AFTER identity_id");
         }
     }
 

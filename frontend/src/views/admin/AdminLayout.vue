@@ -29,9 +29,6 @@
             <el-menu-item index="/admin/limits">
               <el-icon><CreditCard /></el-icon><span>交易限额</span>
             </el-menu-item>
-            <el-menu-item index="/admin/config">
-              <el-icon><Management /></el-icon><span>用户与角色</span>
-            </el-menu-item>
             <el-menu-item index="/admin/config?tab=security">
               <el-icon><Lock /></el-icon><span>安全认证</span>
             </el-menu-item>
@@ -52,6 +49,11 @@
               <el-icon><MapLocation /></el-icon><span>走访管理</span>
             </el-menu-item>
           </el-menu-item-group>
+          <el-menu-item-group title="平台管理">
+            <el-menu-item index="/admin/users">
+              <el-icon><UserFilled /></el-icon><span>用户管理</span>
+            </el-menu-item>
+          </el-menu-item-group>
         </el-menu>
       </el-aside>
       <el-main class="admin-main">
@@ -64,7 +66,7 @@
 <script setup lang="ts">
 import {
   Odometer, User, Wallet, Money, DocumentChecked, CreditCard,
-  Management, Lock, Setting, Document, TrendCharts, MapLocation,
+  Lock, Setting, Document, TrendCharts, MapLocation, UserFilled,
 } from '@element-plus/icons-vue'
 </script>
 

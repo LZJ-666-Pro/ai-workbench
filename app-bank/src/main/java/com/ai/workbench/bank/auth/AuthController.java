@@ -32,7 +32,7 @@ public class AuthController {
     }
 
     private record UserRow(String username, String passwordHash, String displayName,
-                           String platformRole, String identityId) {
+                           String platformRole, String identityId, boolean enabled) {
     }
 
     private final JdbcTemplate jdbc;
@@ -51,16 +51,20 @@ public class AuthController {
             return badRequest("请输入用户名和密码");
         }
         var rows = jdbc.query(
-                "SELECT username, password_hash, display_name, platform_role, identity_id "
+                "SELECT username, password_hash, display_name, platform_role, identity_id, status "
                         + "FROM platform_user WHERE username = ?",
                 (rs, i) -> new UserRow(rs.getString("username"), rs.getString("password_hash"),
                         rs.getString("display_name"), rs.getString("platform_role"),
-                        rs.getString("identity_id")),
+                        rs.getString("identity_id"), rs.getInt("status") == 1),
                 req.username());
         if (rows.isEmpty() || !encoder.matches(req.password(), rows.getFirst().passwordHash())) {
             return ResponseEntity.status(401).body(Map.of("message", "用户名或密码错误"));
         }
         UserRow u = rows.getFirst();
+        // 停用账号即便密码正确也拒绝登录（401 提示凭据错误、403 提示停用，前端可区分展示）
+        if (!u.enabled()) {
+            return ResponseEntity.status(403).body(Map.of("message", "账号已被停用，请联系管理员开通"));
+        }
         String token = jwtService.issue(u.username(), u.displayName(), u.platformRole(), u.identityId());
         return ResponseEntity.ok(new LoginResponse(token,
                 new UserView(u.username(), u.displayName(), u.platformRole(), u.identityId())));

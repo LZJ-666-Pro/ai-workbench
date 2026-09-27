@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS platform_user (
     display_name  VARCHAR(64)  NOT NULL,
     platform_role VARCHAR(16)  NOT NULL DEFAULT 'USER',  -- ADMIN（可进管理后台）/ USER
     identity_id   VARCHAR(64)  NOT NULL,
+    status        TINYINT(1)   NOT NULL DEFAULT 1,       -- 1 启用 / 0 停用（停用后登录与已签发 token 即时失效）
     created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_platform_user_username (username)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;

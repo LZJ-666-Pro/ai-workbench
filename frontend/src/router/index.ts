@@ -21,6 +21,7 @@ const router = createRouter({
         { path: 'funds', name: 'admin-funds', component: () => import('../views/admin/AdminFunds.vue') },
         { path: 'approvals', name: 'admin-approvals', component: () => import('../views/admin/AdminApprovals.vue') },
         { path: 'limits', name: 'admin-limits', component: () => import('../views/admin/AdminLimits.vue') },
+        { path: 'users', name: 'admin-users', component: () => import('../views/admin/AdminUsers.vue') },
         { path: 'config', name: 'admin-config', component: () => import('../views/admin/AdminConfig.vue') },
         { path: 'audit', name: 'admin-audit', component: () => import('../views/admin/AdminAudit.vue') },
         { path: 'marketing', name: 'admin-marketing', component: () => import('../views/admin/AdminMarketing.vue') },
