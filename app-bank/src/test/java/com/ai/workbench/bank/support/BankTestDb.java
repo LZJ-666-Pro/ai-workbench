@@ -100,6 +100,18 @@ public final class BankTestDb {
         if (scripts.length == 0) {
             throw new IllegalStateException("classpath 下未找到 schema.sql，无法建表");
         }
+        // 先删后建：schema.sql 全是 CREATE TABLE IF NOT EXISTS，对已存在的旧表不生效，
+        // 表结构一旦演进，测试库会停在旧结构上，出现「测试全绿但生产缺列」的假象。
+        // 只允许对以 _test 结尾的库执行，避免有人把 TEST_MYSQL_URL 指到真实库上时被清空。
+        String database = template.queryForObject("SELECT DATABASE()", String.class);
+        if (database == null || !database.endsWith("_test")) {
+            throw new IllegalStateException(
+                    "拒绝在非测试库上重建表结构：DATABASE()=" + database + "（库名需以 _test 结尾）");
+        }
+        for (String table : List.of("bank_transaction", "bank_transfer_order", "bank_audit_log",
+                "bank_account", "platform_user", "chat_memory")) {
+            template.execute("DROP TABLE IF EXISTS " + table);
+        }
         for (Resource script : scripts) {
             try (Connection connection = template.getDataSource().getConnection()) {
                 ScriptUtils.executeSqlScript(connection, script);

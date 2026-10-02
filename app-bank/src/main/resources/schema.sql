@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS bank_transfer_order (
     reason       VARCHAR(255)  NULL,
     status       VARCHAR(16)   NOT NULL,           -- PENDING / EXECUTED / CANCELLED / REJECTED
     notified     TINYINT(1)    NOT NULL DEFAULT 0, -- 确认卡片是否已推送给前端
+    executed_at  TIMESTAMP     NULL,               -- 资金真正划转的时刻：日限额按它归集（不能用 created_at，否则跨零点建单可绕过）
     created_at   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_confirm_id (confirm_id),
     INDEX idx_transfer_session (memory_id, status, notified),

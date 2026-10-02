@@ -2,7 +2,6 @@ package com.ai.workbench.bank.service;
 
 import java.math.BigDecimal;
 import java.sql.Timestamp;
-import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -14,6 +13,7 @@ import com.ai.workbench.bank.risk.TransferRiskRules;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -132,22 +132,28 @@ public class TransferService {
         return orders;
     }
 
-    /** 第二段：只有确认接口能调。幂等 CAS + 过期检查 + 规则复检 + 划款，同一事务 */
-    @Transactional
+    /**
+     * 第二段：只有确认接口能调。归属校验 → 过期检查 → 账户行锁 → 幂等 CAS → 规则复检 → 划款，同一事务。
+     *
+     * 并发与越权这两件事都在这一个方法里解决：
+     *   1) 确认单按 confirm_id + memory_id 双条件查：拿到别人的确认码也动不了钱；
+     *      员工身份在这里再兜一次底（工具层没给它 transfer，但确认接口是 HTTP 入口，必须自己拦）。
+     *   2) 进临界区前对付款账户行加排他锁（SELECT ... FOR UPDATE），同一账户的确认被串行化；
+     *      隔离级别取 READ COMMITTED，使复检读到的日累计/余额是「上一笔确认刚提交」的最新值。
+     *      REPEATABLE READ 下普通 SELECT 会一直用事务开始时的快照，并发确认会各自通过复检，
+     *      日限额形同虚设——这是必须显式声明隔离级别的原因。
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResult confirmOrder(String memoryId, String confirmId, boolean confirm) {
+        BankIdentity identity = BankIdentity.fromMemoryId(memoryId);
+        if (!identity.canTransfer()) {
+            audit.record(memoryId, "transfer.confirm", "员工身份尝试操作确认单 " + confirmId, "DENY");
+            return TransferResult.deny("内部员工账号没有资金操作权限，无法操作转账确认单。");
+        }
         Optional<OrderRow> found = jdbc.query("""
                 SELECT id, confirm_id, from_account, to_account, amount, reason, status, created_at
-                FROM bank_transfer_order WHERE confirm_id = ?
-                """, (rs, i) -> new OrderRow(
-                        rs.getLong("id"),
-                        rs.getString("confirm_id"),
-                        rs.getString("from_account"),
-                        rs.getString("to_account"),
-                        rs.getBigDecimal("amount"),
-                        rs.getString("reason"),
-                        rs.getString("status"),
-                        rs.getTimestamp("created_at")),
-                confirmId).stream().findFirst();
+                FROM bank_transfer_order WHERE confirm_id = ? AND memory_id = ?
+                """, rowMapper(), confirmId, memoryId).stream().findFirst();
         if (found.isEmpty()) {
             return TransferResult.fail("确认单不存在：%s".formatted(confirmId));
         }
@@ -175,6 +181,19 @@ public class TransferService {
             return TransferResult.deny("确认单已过期（有效期 %d 分钟），请重新发起转账。".formatted(confirmTtlMinutes));
         }
 
+        // 临界区入口：锁住付款账户行。同一账户的并发确认在此排队，
+        // 排在后面的事务因此能看到前一笔已提交的结果（日累计与余额都是最新值）。
+        Optional<Account> from = lockAccount(order.fromAccount());
+        if (from.isEmpty()) {
+            // 付款账户已不存在：必须显式落到 REJECTED，绝不能让单据停在
+            // 「状态是 EXECUTED、钱却一分没动」的不一致终态上
+            jdbc.update("UPDATE bank_transfer_order SET status = 'REJECTED' WHERE id = ? AND status = 'PENDING'",
+                    order.id());
+            audit.record(memoryId, "transfer.confirm",
+                    "确认单 %s 付款账户不存在".formatted(confirmId), "FAIL");
+            return TransferResult.fail("付款账户不存在，转账未执行。");
+        }
+
         // 幂等核心：状态机 CAS。并发/重复点击下只有一个请求能把 PENDING 推进到 EXECUTED
         int claimed = jdbc.update(
                 "UPDATE bank_transfer_order SET status = 'EXECUTED' WHERE id = ? AND status = 'PENDING'",
@@ -185,12 +204,8 @@ public class TransferService {
         }
 
         // 规则复检：卡片展示期间余额/日累计可能已被其他交易改变（限额按会话身份分档）
-        Optional<Account> from = findAccount(order.fromAccount());
-        if (from.isEmpty()) {
-            return TransferResult.fail("付款账户不存在");
-        }
         RiskDecision decision = TransferRiskRules.check(
-                BankIdentity.fromMemoryId(memoryId), order.toAccount(), order.amount(),
+                identity, order.toAccount(), order.amount(),
                 from.get().balance(), transferredToday(order.fromAccount()));
         if (!decision.allowed()) {
             jdbc.update("UPDATE bank_transfer_order SET status = 'REJECTED' WHERE id = ?", order.id());
@@ -210,6 +225,10 @@ public class TransferService {
         }
         jdbc.update("UPDATE bank_account SET balance = balance + ? WHERE account_no = ?",
                 order.amount(), order.toAccount());
+
+        // 钱真正动了的时刻才写 executed_at：日累计按执行时间归集，
+        // 避免「23:59 建单、次日 00:01 确认」被算到昨天而让今天额度被重复使用
+        jdbc.update("UPDATE bank_transfer_order SET executed_at = NOW() WHERE id = ?", order.id());
 
         Optional<Account> to = findAccount(order.toAccount());
         jdbc.update("INSERT INTO bank_transaction (account_no, amount, description) VALUES (?, ?, ?)",
@@ -232,15 +251,18 @@ public class TransferService {
                         to.map(Account::owner).orElse("?"), order.amount(), newBalance));
     }
 
-    /** 供 queryTransferOrder 工具使用：把确认单的真实状态（含过期判定）讲给模型听 */
+    /**
+     * 供 queryTransferOrder 工具使用：把确认单的真实状态（含过期判定）讲给模型听。
+     * 传了确认码也按「本会话」限定查询——确认码泄漏时，别的会话也读不到这张单。
+     */
     public String describeOrder(String memoryId, String confirmId) {
         boolean byId = confirmId != null && !confirmId.isBlank()
                 && !"null".equalsIgnoreCase(confirmId.trim()) && !"-".equals(confirmId.trim());
         List<OrderRow> rows = byId
                 ? jdbc.query("""
                         SELECT id, confirm_id, from_account, to_account, amount, reason, status, created_at
-                        FROM bank_transfer_order WHERE confirm_id = ?
-                        """, rowMapper(), confirmId.trim())
+                        FROM bank_transfer_order WHERE confirm_id = ? AND memory_id = ?
+                        """, rowMapper(), confirmId.trim(), memoryId)
                 : jdbc.query("""
                         SELECT id, confirm_id, from_account, to_account, amount, reason, status, created_at
                         FROM bank_transfer_order WHERE memory_id = ? ORDER BY id DESC LIMIT 1
@@ -283,11 +305,30 @@ public class TransferService {
                 rs.getTimestamp("created_at"));
     }
 
+    /**
+     * 当日已执行的转账累计。
+     *
+     * 两个口径都固定在数据库侧：
+     *   - 按 executed_at（钱真正动了的时刻）而不是 created_at 归集，堵住「跨零点建单」绕过日限额；
+     *   - 日期边界用 CURDATE() 由 MySQL 按连接时区（Asia/Shanghai）判定，
+     *     不取 JVM 的 LocalDate.now()——否则容器跑 UTC 时「今天」会从北京时间 08:00 才开始，
+     *     每天多出 8 小时窗口让限额被重复使用，且与后台管理端的 CURDATE() 统计口径不一致。
+     */
     private BigDecimal transferredToday(String accountNo) {
         return jdbc.queryForObject("""
                 SELECT COALESCE(SUM(amount), 0) FROM bank_transfer_order
-                WHERE from_account = ? AND status = 'EXECUTED' AND created_at >= ?
-                """, BigDecimal.class, accountNo, Timestamp.valueOf(LocalDate.now().atStartOfDay()));
+                WHERE from_account = ? AND status = 'EXECUTED' AND executed_at >= CURDATE()
+                """, BigDecimal.class, accountNo);
+    }
+
+    /** 取付款账户并加行锁（FOR UPDATE）：并发确认在同一账户上串行，后续复检才读得到最新余额 */
+    private Optional<Account> lockAccount(String accountNo) {
+        List<Account> found = jdbc.query(
+                "SELECT account_no, owner, balance FROM bank_account WHERE account_no = ? FOR UPDATE",
+                (rs, i) -> new Account(rs.getString("account_no"), rs.getString("owner"),
+                        rs.getBigDecimal("balance"), List.of()),
+                accountNo);
+        return found.stream().findFirst();
     }
 
     private String ownerOf(String accountNo) {

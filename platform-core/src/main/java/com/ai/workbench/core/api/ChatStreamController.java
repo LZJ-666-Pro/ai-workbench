@@ -43,7 +43,9 @@ public class ChatStreamController {
 
     @GetMapping(value = "/{agent}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter stream(@PathVariable String agent,
-                             @RequestParam(defaultValue = "demo") String memoryId,
+                             // 必填，不能给默认值：memoryId 承载服务对象身份，一旦有默认值，
+                             // 省略参数的请求就绕过了拦截器的归属校验，身份还会降级成默认身份
+                             @RequestParam String memoryId,
                              @RequestParam String message) {
         SseEmitter emitter = new SseEmitter(0L);
         // 断开/超时登记：TokenStream 无法取消，断开后本次模型调用会跑完，这里至少留痕可观测

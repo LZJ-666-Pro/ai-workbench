@@ -32,6 +32,9 @@ public class AuthInterceptor implements HandlerInterceptor {
     private static final Pattern PATH_MEMORY_ID =
             Pattern.compile("^/api/(?:memory|sessions)/[^/]+/(.+)$");
 
+    /** 对话流接口：/api/chat/{agent}/stream —— 必须显式携带 memoryId */
+    private static final Pattern CHAT_STREAM = Pattern.compile("^/api/chat/[^/]+/stream$");
+
     private final JwtService jwtService;
     private final ObjectMapper objectMapper;
     private final JdbcTemplate jdbc;
@@ -83,7 +86,12 @@ public class AuthInterceptor implements HandlerInterceptor {
                 memoryId = URLDecoder.decode(m.group(1), StandardCharsets.UTF_8);
             }
         }
-        if (memoryId != null && !memoryIdAllowed(principal.identityId(), memoryId)) {
+        if (memoryId == null && CHAT_STREAM.matcher(path).matches()) {
+            // memoryId 是身份的唯一载体：缺失时不但没有归属可校验，身份还会退化成 RETAIL，
+            // 等于任何登录账号都能以零售客户（张三）的身份查账户、发转账。必须直接拒绝。
+            return reject(response, 400, "缺少会话标识 memoryId");
+        }
+        if (memoryId != null && !memoryIdBelongsTo(principal.identityId(), memoryId)) {
             return reject(response, 403, "无权访问其他身份的会话");
         }
         // 会话列表按身份过滤参数：只允许查自己的
@@ -95,10 +103,13 @@ public class AuthInterceptor implements HandlerInterceptor {
     }
 
     /**
-     * memoryId（bank:{identityId}:uuid）必须属于登录身份；
+     * memoryId（bank:{identityId}:uuid）是否属于该登录身份；
      * 两段旧格式（bank:{uuid}）没有身份段，按 RETAIL 处理，仅 RETAIL 身份可用。
+     *
+     * 控制器也需要这个判断（请求体里的 memoryId 拦截器看不到），故开放为 public static 复用，
+     * 避免两处实现各写一份、日后改一处漏一处。
      */
-    private boolean memoryIdAllowed(String identityId, String memoryId) {
+    public static boolean memoryIdBelongsTo(String identityId, String memoryId) {
         String[] parts = memoryId.split(":");
         return switch (parts.length) {
             case 3 -> parts[1].equals(identityId);

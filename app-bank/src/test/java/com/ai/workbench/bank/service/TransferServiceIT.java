@@ -431,6 +431,128 @@ class TransferServiceIT {
         }
     }
 
+    /**
+     * 越权与一致性回归。每个用例都对应一个曾经真实存在的漏洞：
+     * 确认单只按 confirm_id 查（拿到别人的确认码就能动别人的钱）、
+     * 员工能通过 HTTP 确认接口执行转账、付款账户消失后单据停在「已执行但没扣钱」。
+     */
+    @Nested
+    @DisplayName("越权与一致性回归")
+    class AuthorizationAndConsistency {
+
+        @Test
+        @DisplayName("拿别人的确认码确认：查不到单，资金与单据状态都不变")
+        void cannotConfirmOrderOfAnotherSession() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+
+            TransferResult result = service.confirmOrder(BankTestDb.MEM_CORPORATE, confirmId, true);
+
+            assertThat(result.kind()).isEqualTo("FAIL");
+            assertThat(result.message()).contains("不存在");
+            assertThat(BankTestDb.statusOf(confirmId)).isEqualTo("PENDING");
+            assertThat(BankTestDb.balanceOf(BankTestDb.ACC_RETAIL)).isEqualByComparingTo(RETAIL_OPENING);
+            assertThat(BankTestDb.countTransactions(BankTestDb.ACC_RETAIL)).isZero();
+        }
+
+        @Test
+        @DisplayName("拿别人的确认码查询：读不到别人的单据")
+        void cannotDescribeOrderOfAnotherSession() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+
+            assertThat(service.describeOrder(BankTestDb.MEM_CORPORATE, confirmId))
+                    .contains("没有找到");
+        }
+
+        @Test
+        @DisplayName("员工身份即使拿到确认单也无法执行（HTTP 入口自己兜底，不依赖工具层）")
+        void staffCannotConfirmEvenWithValidOrder() {
+            String confirmId = java.util.UUID.randomUUID().toString();
+            BankTestDb.jdbc().update("""
+                    INSERT INTO bank_transfer_order
+                        (confirm_id, memory_id, from_account, to_account, amount, status)
+                    VALUES (?, ?, ?, ?, ?, 'PENDING')
+                    """, confirmId, BankTestDb.MEM_STAFF, BankTestDb.ACC_RETAIL,
+                    BankTestDb.ACC_PAYEE, new BigDecimal("100.00"));
+
+            TransferResult result = service.confirmOrder(BankTestDb.MEM_STAFF, confirmId, true);
+
+            assertThat(result.kind()).isEqualTo("DENY");
+            assertThat(result.message()).contains("没有资金操作权限");
+            assertThat(BankTestDb.statusOf(confirmId)).isEqualTo("PENDING");
+            assertThat(BankTestDb.balanceOf(BankTestDb.ACC_RETAIL)).isEqualByComparingTo(RETAIL_OPENING);
+        }
+
+        @Test
+        @DisplayName("日累计按执行时间归集：把创建时间改到昨天也不能让今天额度被重复使用")
+        void dailyLimitCountsExecutionTimeNotCreationTime() {
+            String first = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "4000.00");
+            assertThat(service.confirmOrder(BankTestDb.MEM_RETAIL, first, true).kind()).isEqualTo("SUCCESS");
+            String second = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "4000.00");
+            assertThat(service.confirmOrder(BankTestDb.MEM_RETAIL, second, true).kind()).isEqualTo("SUCCESS");
+
+            // 创建时间挪到昨天：若按 created_at 归集，今天会被认为一分未转，第三笔 4000 就会被放行
+            BankTestDb.jdbc().update(
+                    "UPDATE bank_transfer_order SET created_at = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE memory_id = ?",
+                    BankTestDb.MEM_RETAIL);
+
+            TransferResult third = service.createPendingOrder(
+                    BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, new BigDecimal("4000.00"), null);
+
+            assertThat(third.kind()).isEqualTo("DENY");
+            assertThat(third.message()).contains("当日累计");
+        }
+
+        @Test
+        @DisplayName("并发确认多张单也不能突破日限额：限额 10000、每笔 2000，只可能成功五笔")
+        void concurrentConfirmsCannotExceedDailyLimit() throws Exception {
+            // 6 笔各 2000，日限额 10000 只装得下 5 笔——无论线程如何交错，成功数都是确定的 5
+            List<String> confirmIds = new java.util.ArrayList<>();
+            for (int i = 0; i < 6; i++) {
+                confirmIds.add(createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "2000.00"));
+            }
+
+            ExecutorService pool = Executors.newFixedThreadPool(confirmIds.size());
+            CountDownLatch start = new CountDownLatch(1);
+            long successes = 0;
+            try {
+                List<Future<TransferResult>> futures = confirmIds.stream()
+                        .map(id -> pool.submit(() -> {
+                            start.await();
+                            return service.confirmOrder(BankTestDb.MEM_RETAIL, id, true);
+                        }))
+                        .toList();
+                start.countDown();
+                for (Future<TransferResult> future : futures) {
+                    if ("SUCCESS".equals(future.get(60, TimeUnit.SECONDS).kind())) {
+                        successes++;
+                    }
+                }
+            } finally {
+                pool.shutdownNow();
+            }
+
+            assertThat(successes).as("日限额 10000 只装得下五笔 2000").isEqualTo(5);
+            assertThat(BankTestDb.balanceOf(BankTestDb.ACC_RETAIL)).isEqualByComparingTo("0.00");
+            assertThat(BankTestDb.balanceOf(BankTestDb.ACC_PAYEE)).isEqualByComparingTo("10000.00");
+        }
+
+        @Test
+        @DisplayName("付款账户已不存在：单据落到 REJECTED，不会停在「已执行却没扣钱」")
+        void missingPayerAccountLeavesNoInconsistentState() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+            BankTestDb.jdbc().update("DELETE FROM bank_account WHERE account_no = ?", BankTestDb.ACC_RETAIL);
+
+            TransferResult result = service.confirmOrder(BankTestDb.MEM_RETAIL, confirmId, true);
+
+            assertThat(result.kind()).isEqualTo("FAIL");
+            assertThat(result.message()).contains("付款账户不存在");
+            assertThat(BankTestDb.statusOf(confirmId))
+                    .as("不能停在 EXECUTED：那意味着单据宣称已执行、实际一分钱没动")
+                    .isEqualTo("REJECTED");
+            assertThat(BankTestDb.countTransactions(BankTestDb.ACC_PAYEE)).isZero();
+        }
+    }
+
     @Nested
     @DisplayName("审计留痕")
     class AuditTrail {
@@ -460,8 +582,8 @@ class TransferServiceIT {
     private static void seedExecutedOrderToday(String memoryId, String from, String amount) {
         BankTestDb.jdbc().update("""
                 INSERT INTO bank_transfer_order
-                    (confirm_id, memory_id, from_account, to_account, amount, status, created_at)
-                VALUES (UUID(), ?, ?, ?, ?, 'EXECUTED', NOW())
+                    (confirm_id, memory_id, from_account, to_account, amount, status, executed_at, created_at)
+                VALUES (UUID(), ?, ?, ?, ?, 'EXECUTED', NOW(), NOW())
                 """, memoryId, from, BankTestDb.ACC_PAYEE, new BigDecimal(amount));
     }
 }
