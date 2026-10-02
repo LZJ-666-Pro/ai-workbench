@@ -4,9 +4,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { ArrowDown, Bell } from '@element-plus/icons-vue'
 import { auth, logout, roleLabel } from './api/auth'
+import { notifications } from './api/platform'
 
 const route = useRoute()
 const router = useRouter()
+
+/** 铃铛角标只数「可点击去处理」的条目：占位文案（如"暂无待处理事项"）不算待办 */
+const notifCount = computed(() => notifications.value.filter(n => n.to).length)
 /** 聊天工作区/后台/登录页/日志页是全屏布局，不走 .main 的限宽布局 */
 const isChatRoute = computed(() =>
   ['/bank', '/knowledge', '/interview', '/admin', '/login', '/logs'].some(p => route.path.startsWith(p)),
@@ -80,19 +84,18 @@ async function confirmLogout() {
       <template v-if="route.path === '/'">
         <el-popover placement="bottom-end" :width="300" trigger="click">
           <template #reference>
-            <el-badge :value="3" :offset="[-4, 4]" class="bell-wrap">
+            <!-- 角标取自工作台接口的真实待办条数（通知内容与数字必须一致；
+                 原先写死 3，点开却只有 3 条静态文案） -->
+            <el-badge :value="notifCount" :hidden="notifCount === 0" :offset="[-4, 4]" class="bell-wrap">
               <el-icon class="bell"><Bell /></el-icon>
             </el-badge>
           </template>
           <div class="notif-title">通知中心</div>
-          <div class="notif-item">
-            <span class="notif-dot warn" />转账审批：星辰科技 ¥380,000 待审批
+          <div v-if="!notifications.length" class="notif-item">
+            <span class="notif-dot" />暂无待处理事项
           </div>
-          <div class="notif-item">
-            <span class="notif-dot" />风控黑名单更新：62220004 已加入拦截
-          </div>
-          <div class="notif-item">
-            <span class="notif-dot" />平台公告：今晚 02:00 - 02:30 例行维护
+          <div v-for="(n, i) in notifications" :key="i" class="notif-item">
+            <span class="notif-dot" :class="{ warn: n.level === 'warn' }" />{{ n.text }}
           </div>
         </el-popover>
         <span class="env-tag"><i class="env-dot" />生产环境</span>

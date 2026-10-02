@@ -5,8 +5,26 @@
  *   - workbench 任何登录用户可读（首页门户，只有聚合数字）
  *   - platform-logs 挂在 /api/admin 前缀下，拦截器统一要求 ADMIN
  */
+import { ref } from 'vue'
 import { authHeaders, handleUnauthorized } from './auth'
 
+/**
+ * 顶栏铃铛与通知面板的数据：HomeView 拉到工作台数据后写入，App.vue 读取。
+ *
+ * 为什么要有这个共享状态：铃铛在 App.vue 的顶栏里，而通知内容在工作台接口里。
+ * 原先铃铛角标写死为 3、面板里三条静态文案，与真实数据毫无关系——
+ * 这正是本轮要清掉的那类假数据。
+ */
+export const notifications = ref<PlatformNotification[]>([])
+
+/**
+ * 路径一律相对 PREFIX 写，**不要**再带 /api 前缀。
+ *
+ * 踩过的坑：这里原先是 PREFIX='/bank/api' 却传 '/api/platform/workbench'，
+ * 拼成 /bank/api/api/platform/workbench，经 Vite 代理 rewrite 后变成
+ * /api/api/platform/workbench，后端 404——首页直接白屏。
+ * 对照 admin.ts 的约定：PREFIX 里已经包含到 /admin 为止的全部前缀。
+ */
 const PREFIX = '/bank/api'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -75,7 +93,7 @@ export interface Workbench {
 }
 
 export function loadWorkbench(): Promise<Workbench> {
-  return request<Workbench>('/api/platform/workbench')
+  return request<Workbench>('/platform/workbench')
 }
 
 /**
@@ -146,7 +164,7 @@ export function loadPlatformLogs(query: LogQuery): Promise<LogPage> {
   for (const [k, v] of Object.entries(query)) {
     if (v !== undefined && v !== '' && v !== null) qs.set(k, String(v))
   }
-  return request<LogPage>(`/api/admin/platform-logs?${qs.toString()}`)
+  return request<LogPage>(`/admin/platform-logs?${qs.toString()}`)
 }
 
 /** 应用标识 → 展示名与配色（日志表里只存 key） */

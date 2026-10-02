@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { auth, logout } from '../auth'
-import { loadPlatformLogs, loadWorkbench } from '../platform'
+import { loadPlatformLogs, loadWorkbench, probeAppRunning } from '../platform'
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -16,7 +16,7 @@ describe('平台工作台接口', () => {
     logout()
   })
 
-  it('读工作台时带上登录 token', async () => {
+  it('读工作台时带上登录 token，且路径只有一个 /api', async () => {
     auth.token = 'tk-1'
     const fetchMock = vi.fn(async () => jsonResponse(200, { apps: [], hero: {}, platform: {} }))
     vi.stubGlobal('fetch', fetchMock)
@@ -24,7 +24,13 @@ describe('平台工作台接口', () => {
     await loadWorkbench()
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
-    expect(url).toBe('/bank/api/api/platform/workbench')
+    // 这个断言必须盯住「后端真实提供的路径」，而不是「代码当前拼出来的路径」。
+    // 教训：这里原先断言的是 /bank/api/api/platform/workbench——拼错了前缀，
+    // 但测试是照实现写的，于是把 404 当成了正确契约锁死，首页因此白屏。
+    // 契约来源：PlatformConsoleController 的 @GetMapping("/api/platform/workbench")
+    //           + Vite 代理 rewrite 去掉 /bank → 前端应请求 /bank/api/platform/workbench
+    expect(url).toBe('/bank/api/platform/workbench')
+    expect(url).not.toContain('/api/api/')
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tk-1')
   })
 
@@ -37,7 +43,8 @@ describe('平台工作台接口', () => {
     await loadPlatformLogs({ app: 'bank', result: '', keyword: undefined, page: 2, size: 20 })
 
     const [url] = fetchMock.mock.calls[0] as unknown as [string]
-    expect(url).toBe('/bank/api/api/admin/platform-logs?app=bank&page=2&size=20')
+    expect(url).toBe('/bank/api/admin/platform-logs?app=bank&page=2&size=20')
+    expect(url).not.toContain('/api/api/')
     expect(url).not.toContain('result=')
     expect(url).not.toContain('keyword=')
   })
@@ -56,5 +63,42 @@ describe('平台工作台接口', () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(403, { message: '需要管理员权限' })))
 
     await expect(loadPlatformLogs({})).rejects.toThrow('需要管理员权限')
+  })
+})
+
+describe('应用在线状态探测', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    logout()
+  })
+
+  it('请求各应用自己的 Agent 列表，路径同样只有一个 /api', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, ['bank']))
+    vi.stubGlobal('fetch', fetchMock)
+
+    expect(await probeAppRunning('/bank', 'bank')).toBe(true)
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string]
+    expect(url).toBe('/bank/api/chat/agents')
+  })
+
+  it('Agent 列表里没有该 Agent 时判定为未在线', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, ['knowledge'])))
+
+    expect(await probeAppRunning('/bank', 'bank')).toBe(false)
+  })
+
+  it('对方服务没起（请求抛错）时判定为未在线，且不抛给调用方', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED') }))
+
+    expect(await probeAppRunning('/interview', 'interview')).toBe(false)
+  })
+
+  it('探测失败不触发登录过期处理（对方没起不等于我掉线）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401, { message: '未登录' })))
+    auth.token = 'tk-1'
+
+    expect(await probeAppRunning('/bank', 'bank')).toBe(false)
+    expect(auth.token).toBe('tk-1')
   })
 })

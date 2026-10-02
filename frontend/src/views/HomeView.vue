@@ -33,8 +33,9 @@
     <el-alert
       v-if="error"
       class="load-error"
-      type="error"
-      :title="`工作台数据加载失败：${error}`"
+      type="warning"
+      :title="`统计数字加载失败：${error}`"
+      description="应用入口不受影响，仍可正常打开；下方指标显示为 — 表示暂未取到。"
       :closable="false"
       show-icon
     >
@@ -123,10 +124,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { auth, roleLabel } from '../api/auth'
-import { loadWorkbench, probeAppRunning, type AppCard, type Workbench } from '../api/platform'
+import {
+  loadWorkbench, notifications, probeAppRunning,
+  type AppCard, type Workbench,
+} from '../api/platform'
 import {
   Lightning, Connection, Cpu, SetUp, OfficeBuilding, Collection,
   Microphone, Plus,
@@ -139,10 +143,56 @@ const workbench = ref<Workbench | null>(null)
 const loading = ref(false)
 const error = ref('')
 
+/**
+ * 应用清单是**产品结构**（有哪几个应用、叫什么、点进去是哪儿），不是统计结果。
+ *
+ * 所以它必须有兜底：接口挂了也要照常列出三个应用。原先直接用 `workbench?.apps ?? []`，
+ * 结果统计接口一 404，整个应用中心就只剩"新建 Agent"一张卡——用户看到的像是
+ * "知识库和面试被删了"。而那个时刻用户最需要的恰恰是能点进各个应用继续干活，
+ * 统计数字晚一点到、或者显示 — 都可以接受，入口消失不行。
+ *
+ * 文案与后端 PlatformConsoleService.appCards() 保持一致，避免兜底态与正常态看着像两个产品。
+ */
+const FALLBACK_APPS: AppCard[] = [
+  {
+    key: 'bank', name: '银行助手「小银」', tone: 'blue', status: 'ready', statusText: '状态检测中',
+    type: '交易型 Agent · 工具调用 + 流式对话，支持转账确认卡片、幂等与全程审计', to: '/bank',
+    metrics: [
+      { label: '今日会话', value: '—' },
+      { label: '工具调用', value: '—' },
+      { label: '成功率', value: '—' },
+    ],
+  },
+  {
+    key: 'knowledge', name: '个人知识库', tone: 'violet', status: 'ready', statusText: '状态检测中',
+    type: '检索型 Agent · 多源路由 + RAG + 引用溯源，向量索引已就绪', to: '/knowledge',
+    metrics: [
+      { label: '文档', value: '—' },
+      { label: '检索 P95', value: '—' },
+    ],
+  },
+  {
+    key: 'interview', name: '面试模拟器', tone: 'green', status: 'ready', statusText: '状态检测中',
+    type: '流程型 Agent · 结构化评分与评估报告，支持多轮追问', to: '/interview',
+    metrics: [
+      { label: '累计面试', value: '—' },
+      { label: '平均分', value: '—' },
+    ],
+  },
+]
+
+/** 在线状态单独存：探测结果要同时作用于"接口返回的列表"和"兜底列表"，
+ *  直接改列表对象会把兜底常量改脏，下次复用就带上了上一轮的状态 */
+const probedStatus = reactive<Record<string, { status: AppCard['status']; statusText: string }>>({})
+
+const apps = computed<AppCard[]>(() => {
+  const list = workbench.value?.apps?.length ? workbench.value.apps : FALLBACK_APPS
+  return list.map(app => ({ ...app, ...(probedStatus[app.key] ?? {}) }))
+})
+
 /** 空态而不是写死的默认值：宁可显示 0 / —，也不显示一个编出来的漂亮数字 */
 const EMPTY_PLATFORM = { eventsToday: 0, avgLatencyMs: null, successRate: 0, endpoints: 0, updatedAt: '—' }
 
-const apps = computed<AppCard[]>(() => workbench.value?.apps ?? [])
 const platform = computed(() => workbench.value?.platform ?? EMPTY_PLATFORM)
 const hero = computed(() => workbench.value?.hero ?? {
   models: 0, sseP95Ms: null, memorySegments: 0, tools: 0,
@@ -151,24 +201,26 @@ const hero = computed(() => workbench.value?.hero ?? {
 async function load() {
   loading.value = true
   error.value = ''
+  // 状态探测与统计接口彼此独立：统计挂了也要能看出哪些应用在线
+  void probeStatuses()
   try {
     workbench.value = await loadWorkbench()
-    // 后端只能看到自己进程里注册的 Agent，另两个应用是独立进程，必须实际探测
-    void probeStatuses()
+    notifications.value = workbench.value.notifications
   } catch (e) {
     error.value = e instanceof Error ? e.message : '未知错误'
+    notifications.value = []
   } finally {
     loading.value = false
   }
 }
 
 async function probeStatuses() {
-  const list = workbench.value?.apps
-  if (!list) return
+  const list = workbench.value?.apps?.length ? workbench.value.apps : FALLBACK_APPS
   await Promise.all(list.map(async app => {
     const running = await probeAppRunning(app.to, app.key)
-    app.status = running ? 'running' : 'offline'
-    app.statusText = running ? '运行中' : '未启动'
+    probedStatus[app.key] = running
+      ? { status: 'running', statusText: '运行中' }
+      : { status: 'offline', statusText: '未启动' }
   }))
 }
 
