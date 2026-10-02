@@ -13,6 +13,23 @@ async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
   return resp
 }
 
+/**
+ * 把后端的非 2xx 响应翻译成可直接展示的原因。
+ * 后端拒绝统一是 {"message": "..."}（拦截器的 401/403 与护栏的 429 同形状），
+ * 透出原文比 "HTTP 429" 有用得多——用户需要知道的是「多久之后能再试」。
+ */
+async function describeFailure(resp: Response): Promise<string> {
+  try {
+    const body = (await resp.json()) as { message?: string }
+    if (body && typeof body.message === 'string' && body.message) {
+      return body.message
+    }
+  } catch {
+    /* 响应不是 JSON（网关错误页等）时走兜底文案 */
+  }
+  return `HTTP ${resp.status}（请确认对应后端已启动）`
+}
+
 export interface ChatEvent {
   type: 'delta' | 'done' | 'error' | 'confirm_request'
   content?: string
@@ -235,7 +252,7 @@ export async function respondTransferConfirm(
     body: JSON.stringify({ memoryId, confirmId, action }),
   })
   if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status}`)
+    throw new Error(await describeFailure(resp))
   }
   return await resp.json() as { ok: boolean; message: string }
 }
@@ -266,7 +283,7 @@ export async function streamChat(opts: {
     + `&message=${encodeURIComponent(opts.message)}`
   const resp = await apiFetch(url, { signal: opts.signal })
   if (!resp.ok || !resp.body) {
-    throw new Error(`HTTP ${resp.status}（请确认对应后端已启动）`)
+    throw new Error(await describeFailure(resp))
   }
 
   const reader = resp.body.getReader()

@@ -316,7 +316,9 @@ async function send() {
       },
     })
   } catch (e) {
-    reply.content += `\n[连接失败] ${e instanceof Error ? e.message : String(e)}`
+    // 用「请求失败」而非「连接失败」：这里的 e.message 可能是后端护栏的限流提示
+    // （429 会被 streamChat 翻译成可读原因），并非网络不通
+    reply.content += `\n[请求失败] ${e instanceof Error ? e.message : String(e)}`
   } finally {
     streaming.value = false
     controller = null

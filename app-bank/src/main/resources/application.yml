@@ -38,6 +38,13 @@ ai:
     base-url: ${AI_LLM_BASE_URL:https://ws-k4ybdjfu1bcadgfh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
     api-key: ${AI_LLM_API_KEY:${GLM_API_KEY:}}
     model-name: ${AI_LLM_MODEL:qwen3.8-flash}
+  # LLM 成本与限流护栏（默认值见 LlmGuardProperties，此处显式写出便于运维调参）
+  guard:
+    enabled: true
+    # 单会话每分钟请求数：挡脚本与前端死循环
+    requests-per-minute: 20
+    # 单个服务对象每日 token 上限（输入+输出）：挡换会话继续刷与长上下文烧额度
+    daily-token-limit: 300000
 
 bank:
   # 演示登录态：当前客户账户号（Phase 2 接入登录后改为从会话中取）

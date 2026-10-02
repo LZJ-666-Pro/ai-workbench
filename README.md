@@ -118,22 +118,30 @@ mvn test
 # 只跑银行模块
 mvn -pl app-bank -am test
 
-# 前端类型检查
-cd frontend && npm run typecheck
+# 前端类型检查 + 单元测试
+cd frontend && npm run verify
 ```
 
 **分层**：
 
 | 层 | 位置 | 依赖 | 说明 |
 |---|---|---|---|
-| 单元测试 `*Test` | `app-bank/src/test/...` | 无 | 风控规则、身份解析、工具权限边界、工具上下文 |
-| 集成测试 `*IT` | 同上 | 真实 MySQL | 转账两段式状态机：建单/确认/幂等/过期/并发/取消/审计 |
+| 后端单元测试 `*Test` | `platform-core`、`app-bank` 的 `src/test/...` | 无 | 护栏决策与滑动窗口限流、风控规则、身份解析、工具权限边界、工具上下文 |
+| 后端集成测试 `*IT` | `app-bank/src/test/...` | 真实 MySQL | 转账两段式状态机：建单/确认/幂等/过期/并发/取消/审计 |
+| 前端单元测试 `*.spec.ts` | `frontend/src/**/__tests__/` | jsdom | SSE 帧解析与分片拼装、身份与 memoryId 绑定、登录态、护栏 429 提示、图表生命周期 |
+
+前端测试里的假 Response 是**手写**的（只实现被测代码用到的 `ok`/`status`/`body.getReader`/`json`），
+不依赖 jsdom 是否提供 `ReadableStream`/`Response`——测试不该因为环境差异而假失败。
 
 集成测试**刻意不用 H2**：被测逻辑的价值几乎全在 MySQL 语义里（`UPDATE ... WHERE status='PENDING'`
 的 CAS 幂等、`balance >= ?` 乐观扣款、DECIMAL 精度、聚合口径），换内存库等于换了个被测对象。
 测试直连独立库 `ai_workbench_test`（与开发库隔离，可随时清空），建表**跑的是各模块真实的
 Flyway 迁移**（先 `clean` 再 `migrate`），所以迁移脚本一旦写错，`mvn test` 立刻失败，
 而不是等到应用启动才炸。
+
+**CI**：`.github/workflows/ci.yml` 两个 job——后端用 MySQL 8.4 service 容器跑 `mvn test`
+（`TEST_MYSQL_REQUIRED=true`，数据库没起来就直接失败而不是静默跳过）；前端 `npm ci` 后跑
+类型检查与单测。
 
 **数据库迁移**：表结构由 Flyway 版本化迁移管理（`各模块/src/main/resources/db/migration/`），
 启动时自动升级，执行记录落在 `flyway_schema_history` 表。迁移一旦提交就不再修改
@@ -214,6 +222,42 @@ readiness 永远失败、服务被判定不可用）；`/actuator/**` 其余端�
 
 ---
 
+## LLM 成本与限流护栏
+
+配置（`ai.guard.*`，默认值见 `LlmGuardProperties`）：
+
+| 配置 | 默认 | 作用 |
+|---|---|---|
+| `enabled` | `true` | 总开关。关闭后不拦截，但**仍然记账**——先观察真实用量再定阈值更稳妥 |
+| `requests-per-minute` | `20` | 单会话每分钟请求数，挡脚本与前端死循环 |
+| `daily-token-limit` | `300000` | 单个服务对象每日 token 上限，挡换会话继续刷与长上下文烧额度 |
+
+**两层维度不同，不能合并**：
+
+- 限流按**会话**（memoryId）：正常人手速连续提问到不了 20 次/分钟，脚本一秒钟就能打出几十条。
+- 预算按**计费主体**：memoryId 去掉会话段（`bank:zhangsan:7f3a…` → `bank:zhangsan`）。
+  若预算也按会话算，用户新开一个会话就重置，限额等于没有。
+
+护栏挡在**真正调用模型之前**——拦在花钱之后就没有意义。拒绝返回 HTTP 429 +
+`{"message": "...", "reason": "rate_limit|token_budget"}`（与拦截器的 401/403 同形状，
+前端一套解析逻辑即可），界面直接把原因显示给用户，而不是「HTTP 429」。
+
+用量落在 `llm_usage` 表（V5 迁移），**不是**只留在内存指标里：限额要跨重启存活，且客户
+投诉「为什么给我限了」时要能拿出具体数字。输入/输出 token 分列存——两者单价不同。
+
+> 日期口径固定在数据库侧（`CURDATE()`），与转账日限额、后台统计一致。若改用 JVM 的
+> `LocalDate.now()`，容器跑 UTC 时「今天」会从北京时间 08:00 才开始，每天多出 8 小时
+> 窗口让配额被重复使用。
+
+指标：`chat.guard.reject{agent,reason}` 看拒绝量与原因分布；`http.server.requests{status="429"}`
+说明拒绝是传输层可见的（网关、告警都能识别）。
+
+> 单实例限流器是进程内的，不引 Redis——多一个必须可用的外部依赖，限流器自身挂掉比限流失效
+> 更严重。多实例部署时必须换成 Redis 或网关层限流，届时 `SlidingWindowRateLimiter`
+> 可作本地降级实现。
+
+---
+
 ## 技术选型
 
 | 项 | 选型 |
@@ -223,6 +267,8 @@ readiness 永远失败、服务被判定不可用）；`/actuator/**` 其余端�
 | 存储 | MySQL 8（会话记忆 + 业务数据，容器端口 13306）+ Redis（预留） |
 | 迁移 | Flyway 11（版本化 DDL，`flyway_schema_history` 记录演进，存量库自动 baseline 收敛） |
 | 可观测 | Spring Boot Actuator + Micrometer（Prometheus 端点）；traceId 贯穿日志 / SSE 异步线程 / 审计表 |
+| 护栏 | 自研 `ai.guard`（滑动窗口限流 + 每日 token 预算 + `llm_usage` 台账），入口处拒绝、返回 429 |
+| 前端测试 | Vitest + @vue/test-utils + jsdom；CI 用 GitHub Actions（后端 MySQL service + 前端 `npm ci`） |
 | 向量库 | Postgres + pgvector（知识库阶段启用） |
 | 前端 | Vue3 + Vite，fetch + ReadableStream 手解 SSE 帧 |
 | env | `.env` + spring-dotenv + docker compose 变量替换，一处定义两端生效 |
@@ -233,7 +279,7 @@ readiness 永远失败、服务被判定不可用）；`/actuator/**` 其余端�
 
 - [x] **Phase 0** 平台底座：LLM 配置化接入、SSE 流式、MySQL 会话记忆、Agent 注册/工具框架、token 用量日志、RAG 配置位、docker-compose
 - [x] **Phase 1** 银行交易 Agent：账户/流水落库 → 转账 + human-in-the-loop 确认卡片、幂等键、审计日志、限额/白名单硬规则
-- [x] **底座硬化**：测试体系（风控/权限单测 + 转账状态机集成测试，77 例）、越权与并发一致性修复（确认单按会话限定、行锁 + READ COMMITTED 串行化、日限额按执行时刻归集）、Flyway 版本化迁移、可观测性（Actuator 健康检查 + Micrometer 指标 + traceId 贯穿日志与审计表）
+- [x] **底座硬化**：测试体系（后端 94 例 + 前端 20 例）、越权与并发一致性修复（确认单按会话限定、行锁 + READ COMMITTED 串行化、日限额按执行时刻归集）、Flyway 版本化迁移、可观测性（健康检查 + 指标 + traceId 贯穿）、LLM 成本与限流护栏、CI 流水线
 - [ ] **Phase 2** 平台化：合并三应用为 `app-platform`、Spring Security 登录、工具级权限（无权限工具对模型不可见）、平台级审计中心、前端控制台布局（侧边导航 + 全局 AI 助手）、「运营助手」Agent + 只读 SQL 分析工具
 - [ ] **Phase 3** 企业文档中心：真实数据源接入、路由 Agent、查询改写、混合检索（向量 + 全文）、引用溯源、评测集与回归脚本
 - [ ] **Phase 4** 固化：统一部署、评测补齐、架构图 + 关键决策记录（ADR）、简历叙事

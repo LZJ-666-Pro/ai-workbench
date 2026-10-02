@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    name: 后端构建与测试
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-password
+        ports:
+          - 13306:3306
+        # 等 MySQL 真正可连接再跑测试：服务容器「已启动」不等于「已就绪」，
+        # 少了健康检查会在前几秒随机失败
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: 构建并跑全部测试（含真实 MySQL 集成测试）
+        env:
+          # 集成测试直连 MySQL（不用 H2：被测逻辑的价值全在 MySQL 语义里）
+          TEST_MYSQL_URL: jdbc:mysql://127.0.0.1:13306/ai_workbench_test?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+          TEST_MYSQL_USER: root
+          TEST_MYSQL_PASSWORD: ci-password
+          # 必须设：否则数据库没起来时集成测试会「静默跳过」而构建依然全绿，
+          # 等于最关键的测试根本没跑（BankTestDb 会据此直接失败而不是 Assumptions.skip）
+          TEST_MYSQL_REQUIRED: 'true'
+          # 应用上下文启动期需要解析数据源占位符
+          MYSQL_PASSWORD: ci-password
+        run: mvn -B test
+
+  frontend:
+    name: 前端类型检查与单测
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # npm ci 而不是 npm install：严格按 package-lock.json 安装，
+      # 避免 CI 上因依赖漂移出现「本地过、CI 挂」
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 单元测试
+        run: npm run test

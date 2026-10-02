@@ -7,13 +7,18 @@ import java.util.concurrent.TimeUnit;
 
 import com.ai.workbench.core.agent.AgentRegistry;
 import com.ai.workbench.core.agent.Assistant;
+import com.ai.workbench.core.guard.ChatGuardException;
+import com.ai.workbench.core.guard.LlmGuard;
 import com.ai.workbench.core.observability.TraceContext;
 import dev.langchain4j.model.output.TokenUsage;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -45,13 +50,16 @@ public class ChatStreamController {
     private final AgentRegistry registry;
     private final ObjectProvider<AgentStreamListener> streamListeners;
     private final MeterRegistry meterRegistry;
+    private final LlmGuard llmGuard;
 
     public ChatStreamController(AgentRegistry registry,
                                 ObjectProvider<AgentStreamListener> streamListeners,
-                                MeterRegistry meterRegistry) {
+                                MeterRegistry meterRegistry,
+                                LlmGuard llmGuard) {
         this.registry = registry;
         this.streamListeners = streamListeners;
         this.meterRegistry = meterRegistry;
+        this.llmGuard = llmGuard;
     }
 
     @GetMapping(value = "/{agent}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -61,6 +69,17 @@ public class ChatStreamController {
                              @RequestParam String memoryId,
                              @RequestParam String message) {
         String traceId = TraceContext.current();
+
+        // 护栏必须挡在真正调用模型之前——拦在花钱之后就没有意义了。
+        // 拒绝用 HTTP 429 而不是 SSE error 事件：这是传输层的「别再发了」，
+        // 用状态码表达才能被 http.server.requests 统计到、被网关与调用方识别。
+        LlmGuard.Decision decision = llmGuard.check(memoryId);
+        if (!decision.allowed()) {
+            meterRegistry.counter("chat.guard.reject", "agent", agent, "reason", decision.reason()).increment();
+            log.warn("对话被护栏拒绝: agent={}, memoryId={}, reason={}", agent, memoryId, decision.reason());
+            throw new ChatGuardException(decision.reason(), decision.message());
+        }
+
         SseEmitter emitter = new SseEmitter(0L);
         // 工具调用跑在 LLM 客户端的线程池线程上，拿不到请求线程的 MDC。
         // 按 memoryId 登记本次请求的 traceId，工具层执行时取回并重新绑定 MDC
@@ -101,6 +120,9 @@ public class ChatStreamController {
                             ? response.metadata().tokenUsage() : null;
                     SseSender.send(emitter, Map.of("type", "done",
                             "totalTokens", usage != null ? usage.totalTokenCount() : -1));
+                    // 记账放在流结束处：此处拿得到 memoryId（护栏需要的计费主体）
+                    // 与最终 TokenUsage（LangChain4j 已把多轮工具调用的用量累加）
+                    llmGuard.recordUsage(memoryId, agent, usage, traceId);
                     meterRegistry.counter("chat.stream", "agent", agent, "result", "done").increment();
                     recordDuration(agent, startNanos);
                     emitter.complete();
@@ -141,5 +163,16 @@ public class ChatStreamController {
     private void recordDuration(String agent, long startNanos) {
         meterRegistry.timer("chat.stream.duration", "agent", agent)
                 .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
+    }
+
+    /**
+     * 护栏拒绝 → 429 + JSON 错误体。
+     * 响应体形状（{@code {"message": ...}}）与 AuthInterceptor 的拒绝保持一致，
+     * 前端一套解析逻辑就能同时处理「未登录」与「被限流」。
+     */
+    @ExceptionHandler(ChatGuardException.class)
+    public ResponseEntity<Map<String, Object>> handleGuardRejection(ChatGuardException e) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(Map.of("message", e.getMessage(), "reason", e.getReason()));
     }
 }
