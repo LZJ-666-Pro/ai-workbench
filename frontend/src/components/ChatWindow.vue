@@ -34,7 +34,7 @@ const props = withDefaults(defineProps<{
   identity?: string
   /** 主题类名（如 theme-bank 企业银行主题），加在组件根元素上，不传用默认主题 */
   theme?: string
-  /** 侧栏业务功能区（企业网银菜单式入口：点击发送对应指令；disabled 项置灰展示） */
+  /** 侧栏业务功能区（企业网银菜单式入口：点击把对应指令填入输入框待用户确认；disabled 项置灰展示） */
   businessFunctions?: Suggestion[]
 }>(), {
   placeholder: '输入消息，回车发送…',
@@ -260,11 +260,20 @@ function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
 }
 
-/** 点击建议问题：直接发送（prompt 优先于 label；置灰项不响应） */
+/** 点击欢迎屏建议问题：直接发送（prompt 优先于 label；置灰项不响应） */
 async function sendSuggestion(s: Suggestion) {
   if (streaming.value || s.disabled) return
   input.value = s.prompt || s.label
   await send()
+}
+
+/** 点击侧栏业务功能：只把指令填入输入框并聚焦，不自动发送，用户可编辑后再回车 */
+async function fillSuggestion(s: Suggestion) {
+  if (streaming.value || s.disabled) return
+  input.value = s.prompt || s.label
+  await nextTick()
+  autoResize()
+  textareaEl.value?.focus()
 }
 
 async function send() {
@@ -391,8 +400,8 @@ function formatTime(timestamp: string): string {
               :key="f.label"
               class="biz-item"
               :class="{ disabled: f.disabled }"
-              :title="f.disabled ? '演示版暂未开通' : f.prompt || f.label"
-              @click="sendSuggestion(f)"
+              :title="f.disabled ? '演示版暂未开通' : `点击填入输入框：${f.prompt || f.label}`"
+              @click="fillSuggestion(f)"
             >
               <span class="biz-icon">{{ f.icon }}</span>
               <span class="biz-label">{{ f.label }}</span>
