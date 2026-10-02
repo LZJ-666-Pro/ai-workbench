@@ -3,6 +3,7 @@ package com.ai.workbench.bank.api;
 import com.ai.workbench.bank.auth.AuthInterceptor;
 import com.ai.workbench.bank.auth.JwtService.AuthPrincipal;
 import com.ai.workbench.bank.console.ConsoleDtos.LogPage;
+import com.ai.workbench.bank.console.ConsoleDtos.SearchResult;
 import com.ai.workbench.bank.console.ConsoleDtos.Workbench;
 import com.ai.workbench.bank.console.PlatformConsoleService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -49,5 +50,18 @@ public class PlatformConsoleController {
         int safePage = Math.max(1, page);
         int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
         return console.logs(app, category, result, keyword, safePage, safeSize);
+    }
+
+    /**
+     * 全局搜索：应用入口 + 运行日志 + 已注册接口。
+     * 任何登录用户可用；日志那一组只对 ADMIN 返回（与日志页同一把尺子），
+     * 非管理员仍能搜到应用与接口，不会因为权限不同整个功能就不可用。
+     */
+    @GetMapping("/api/platform/search")
+    public SearchResult search(@RequestAttribute(AuthInterceptor.ATTR_PRINCIPAL) AuthPrincipal principal,
+                               @RequestParam String q,
+                               @RequestParam(defaultValue = "5") int limit) {
+        int safeLimit = Math.min(Math.max(1, limit), 20);
+        return console.search(q, safeLimit, "ADMIN".equals(principal.role()));
     }
 }

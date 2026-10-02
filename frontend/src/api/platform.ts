@@ -183,3 +183,30 @@ export const CATEGORY_LABELS: Record<string, string> = {
   search: '知识检索',
   interview: '面试',
 }
+
+// ---------- 全局搜索 ----------
+
+/** 搜索命中：平台入口（应用页 / 日志页 / 管理后台 / 开发者文档） */
+export interface AppHit {
+  key: string
+  name: string
+  type: string
+  to: string
+}
+
+/** 搜索命中：后端已注册的接口 */
+export interface EndpointHit {
+  method: string
+  path: string
+}
+
+/** 三组结果来自不同数据源：应用是产品目录、日志查库、接口问 Spring */
+export interface SearchResult {
+  apps: AppHit[]
+  logs: LogRow[]
+  endpoints: EndpointHit[]
+}
+
+export function searchPlatform(q: string, limit = 5): Promise<SearchResult> {
+  return request<SearchResult>(`/platform/search?q=${encodeURIComponent(q)}&limit=${limit}`)
+}

@@ -4,9 +4,14 @@ import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import com.ai.workbench.bank.console.ConsoleDtos.AppCard;
+import com.ai.workbench.bank.console.ConsoleDtos.AppHit;
+import com.ai.workbench.bank.console.ConsoleDtos.EndpointHit;
 import com.ai.workbench.bank.console.ConsoleDtos.HeroCaps;
 import com.ai.workbench.bank.console.ConsoleDtos.LogPage;
 import com.ai.workbench.bank.console.ConsoleDtos.LogRow;
@@ -14,12 +19,17 @@ import com.ai.workbench.bank.console.ConsoleDtos.LogSummary;
 import com.ai.workbench.bank.console.ConsoleDtos.Metric;
 import com.ai.workbench.bank.console.ConsoleDtos.Notification;
 import com.ai.workbench.bank.console.ConsoleDtos.PlatformStats;
+import com.ai.workbench.bank.console.ConsoleDtos.SearchResult;
 import com.ai.workbench.bank.console.ConsoleDtos.Workbench;
 import com.ai.workbench.core.agent.AgentRegistry;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 /**
@@ -224,21 +234,121 @@ public class PlatformConsoleService {
                        duration_ms, tokens, trace_id, created_at
                 FROM platform_event_log
                 """ + w + " ORDER BY id DESC LIMIT ? OFFSET ?",
-                (rs, i) -> new LogRow(
-                        rs.getLong("id"),
-                        formatTime(rs.getTimestamp("created_at")),
-                        rs.getString("app"),
-                        rs.getString("category"),
-                        rs.getString("action"),
-                        rs.getString("actor"),
-                        rs.getString("memory_id"),
-                        rs.getString("detail"),
-                        rs.getString("result"),
-                        (Integer) rs.getObject("duration_ms"),
-                        (Integer) rs.getObject("tokens"),
-                        rs.getString("trace_id")),
+                logMapper(),
                 pageArgs.toArray());
         return new LogPage(rows, total, page, size, summary(w, args));
+    }
+
+    /** 日志行映射：分页查询与搜索共用，避免两处 SELECT 的列顺序对不上 */
+    private static RowMapper<LogRow> logMapper() {
+        return (rs, i) -> new LogRow(
+                rs.getLong("id"),
+                formatTime(rs.getTimestamp("created_at")),
+                rs.getString("app"),
+                rs.getString("category"),
+                rs.getString("action"),
+                rs.getString("actor"),
+                rs.getString("memory_id"),
+                rs.getString("detail"),
+                rs.getString("result"),
+                (Integer) rs.getObject("duration_ms"),
+                (Integer) rs.getObject("tokens"),
+                rs.getString("trace_id"));
+    }
+
+    // ==================== 全局搜索 ====================
+
+    /**
+     * 平台产品目录：搜索「应用」这一组的数据源。
+     *
+     * 为什么是静态目录而不是查库：这是「平台上有哪些入口」的产品事实，
+     * 不是业务数据——库里没有也不该有「开发者文档」这张表。
+     * 但每个入口的 to 都是真实路由，点进去确实能到。
+     *
+     * keywords 是必需的：用户搜的是「转账」「余额」这类**业务词**，
+     * 而不是「交易型 Agent」这种我们内部的分类词。只匹配名称与描述的话，
+     * 搜「转账」会一条应用都命中不了——而用户此刻想找的恰恰是银行助手。
+     */
+    private record AppEntry(String key, String name, String type, String to, String keywords) {
+    }
+
+    private static final List<AppEntry> APP_CATALOG = List.of(
+            new AppEntry("bank", "银行助手「小银」", "交易型 Agent · 工具调用 + 流式对话", "/bank",
+                    "转账 余额 账户 交易 流水 风控 确认单 银行 客服"),
+            new AppEntry("knowledge", "个人知识库", "检索型 Agent · 多源路由 + RAG", "/knowledge",
+                    "知识库 文档 检索 rag 引用 制度 产品手册 监管 向量"),
+            new AppEntry("interview", "面试模拟器", "流程型 Agent · 结构化评分", "/interview",
+                    "面试 评分 简历 追问 评估 候选人 招聘"),
+            new AppEntry("logs", "平台运行日志", "对话 / 工具调用 / 登录 / 护栏拦截的记录", "/logs",
+                    "日志 运行记录 traceid 审计 排障 报错"),
+            new AppEntry("admin", "管理后台", "客户 360 / 审批中心 / 资金管理 / 配置中心", "/admin",
+                    "管理 后台 客户 审批 资金 限额 配置 用户"),
+            new AppEntry("developers", "开发者文档", "AgentSpec 声明与平台 API 说明", "/developers",
+                    "接口 api 文档 agentspec 接入 开发者"));
+
+    /**
+     * 全局搜索：应用入口（静态目录）+ 运行日志（查库）+ 已注册接口（问 Spring）。
+     *
+     * 日志只对 ADMIN 返回：里面有会话 id、traceId 与业务动作明细，与日志页同一把尺子。
+     * 非管理员仍能搜应用与接口，不会因为权限不同就整个功能不可用。
+     */
+    public SearchResult search(String keyword, int limit, boolean admin) {
+        String q = keyword == null ? "" : keyword.trim();
+        if (q.isEmpty()) {
+            return new SearchResult(List.of(), List.of(), List.of());
+        }
+        return new SearchResult(searchApps(q), admin ? searchLogs(q, limit) : List.of(),
+                searchEndpoints(q, limit));
+    }
+
+    private static List<AppHit> searchApps(String q) {
+        String needle = q.toLowerCase();
+        return APP_CATALOG.stream()
+                .filter(app -> app.name().toLowerCase().contains(needle)
+                        || app.type().toLowerCase().contains(needle)
+                        || app.key().toLowerCase().startsWith(needle)
+                        || app.keywords().toLowerCase().contains(needle))
+                .map(app -> new AppHit(app.key(), app.name(), app.type(), app.to()))
+                .toList();
+    }
+
+    private List<LogRow> searchLogs(String q, int limit) {
+        String like = "%" + q + "%";
+        return jdbc.query("""
+                SELECT id, app, category, action, actor, memory_id, detail, result,
+                       duration_ms, tokens, trace_id, created_at
+                FROM platform_event_log
+                WHERE action LIKE ? OR detail LIKE ? OR memory_id LIKE ? OR trace_id LIKE ?
+                ORDER BY id DESC LIMIT ?
+                """, logMapper(), like, like, like, like, limit);
+    }
+
+    /** 搜索接口：直接问 Spring 已注册的映射，搜出来的就是真正存在的路径 */
+    private List<EndpointHit> searchEndpoints(String q, int limit) {
+        RequestMappingHandlerMapping mapping = handlerMappings.getIfAvailable();
+        if (mapping == null) {
+            return List.of();
+        }
+        String needle = q.toLowerCase();
+        Set<EndpointHit> seen = new LinkedHashSet<>();
+        for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : mapping.getHandlerMethods().entrySet()) {
+            RequestMappingInfo info = entry.getKey();
+            if (info.getPathPatternsCondition() == null) {
+                continue;
+            }
+            Set<RequestMethod> methods = info.getMethodsCondition().getMethods();
+            String method = methods.isEmpty() ? "ANY" : methods.iterator().next().name();
+            for (String path : info.getPathPatternsCondition().getPatternValues()) {
+                if (!path.startsWith("/api/") || !path.toLowerCase().contains(needle)) {
+                    continue;
+                }
+                seen.add(new EndpointHit(method, path));
+                if (seen.size() >= limit) {
+                    return List.copyOf(seen);
+                }
+            }
+        }
+        return List.copyOf(seen);
     }
 
     /** 汇总不受当前页影响，否则统计条会随着翻页变化，读起来像 bug */

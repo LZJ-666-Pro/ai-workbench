@@ -172,6 +172,7 @@ Flyway 迁移**（先 `clean` 再 `migrate`），所以迁移脚本一旦写错�
   （事件：`delta` 增量 / `done` 含 token 用量 / `error` 含 traceId）
 - `GET /api/chat/agents` — 已注册的 Agent 列表
 - `GET /api/platform/workbench` — 首页工作台数据（任何登录用户；全是聚合数字）
+- `GET /api/platform/search?q=&limit=` — 全局搜索：应用入口 / 运行日志 / 已注册接口
 - `GET /api/admin/platform-logs?app&category&result&keyword&page&size` — 平台运行日志（ADMIN）
 - `GET /{agent}` 对应应用静态页（目前 app-bank 有聊天 demo 页）
 
@@ -217,6 +218,19 @@ Flyway 迁移**（先 `clean` 再 `migrate`），所以迁移脚本一旦写错�
 **应用在线状态**：工作台接口跑在 app-bank 里，它的 `AgentRegistry` 只登记了银行助手，
 另两个应用是独立进程。因此首页拿到数据后会用各应用自己的 `/api/chat/agents` **实际探测**一次——
 只靠本进程注册表得出的状态必然把另外两个应用误报成「未注册」。
+
+**顶栏全局搜索**（`/api/platform/search`）三组结果各有各的数据源，都是真的：
+
+| 分组 | 数据源 |
+|---|---|
+| 应用 | 静态产品目录（平台上有哪些入口是产品事实，库里没有也不该有「开发者文档」这张表），带业务关键词——搜「转账」能命中银行助手，而不只是搜「交易型 Agent」 |
+| 日志 | 查 `platform_event_log`（动作 / 明细 / 会话 / traceId 四个字段都匹配）；点进去按 traceId 精确定位那一次请求 |
+| 接口 | 直接问 Spring 的 `RequestMappingHandlerMapping`，搜出来的就是真正注册了的路径 |
+
+日志那一组只对 ADMIN 返回（与日志页同一把尺子）；非管理员仍能搜应用与接口，
+不会因为权限不同整个功能就不可用。
+
+**应用中心**支持卡片 / 列表两种视图，选择存 localStorage——用户选了列表，刷新后不该变回卡片。
 
 ---
 

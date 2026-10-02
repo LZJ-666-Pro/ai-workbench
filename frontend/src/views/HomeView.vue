@@ -1,98 +1,143 @@
 <template>
   <section class="portal">
-    <!-- 品牌英雄区：深蓝渐变呼应登录页，问候 + 玻璃能力胶囊 -->
-    <div class="hero">
-      <svg class="mesh" width="300" height="220" viewBox="0 0 300 220" fill="none" aria-hidden="true">
-        <circle cx="36" cy="48" r="3" fill="rgba(255,255,255,.5)" />
-        <circle cx="130" cy="26" r="2" fill="rgba(255,255,255,.35)" />
-        <circle cx="210" cy="80" r="2.5" fill="rgba(255,255,255,.4)" />
-        <circle cx="80" cy="140" r="2" fill="rgba(255,255,255,.3)" />
-        <path d="M36 48 L130 26 L210 80 L80 140 Z" stroke="rgba(255,255,255,.14)" fill="none" />
-      </svg>
-      <div class="hero-main">
-        <h1>{{ greeting }}，{{ auth.user?.displayName ?? '用户' }}</h1>
-        <p class="tenant-line">
-          智汇银行（总行） · {{ roleLabel(auth.user?.platformRole) }} · <span class="env-tag">生产环境</span>
-        </p>
-        <div class="cap-row">
-          <span class="cap"><el-icon><Lightning /></el-icon>LLM 接入<b>{{ hero.models }} 个模型</b></span>
-          <span class="cap"><el-icon><Connection /></el-icon>SSE 流式<b>{{ hero.sseP95Ms == null ? '—' : hero.sseP95Ms + 'ms' }}</b></span>
-          <span class="cap"><el-icon><Cpu /></el-icon>会话记忆<b>{{ hero.memorySegments.toLocaleString() }} 段</b></span>
-          <span class="cap"><el-icon><SetUp /></el-icon>工具能力<b>{{ hero.tools }} 项</b></span>
+    <!-- 上下文条：通栏。左侧是租户/角色上下文，右侧是平台能力胶囊（数字全部来自接口） -->
+    <div class="context-bar">
+      <div class="bar-inner">
+        <div class="ctx-left">
+          <span class="ctx-org">智汇银行（总行）</span>
+          <span class="ctx-sep">·</span>
+          <span class="ctx-role">{{ roleLabel(auth.user?.platformRole) }}</span>
+          <span class="env-tag">生产环境</span>
+        </div>
+        <div class="ctx-caps">
+          <span class="cap">LLM 接入<b>{{ hero.models }} 个模型</b></span>
+          <span class="cap">SSE 流式<b>{{ hero.sseP95Ms == null ? '—' : hero.sseP95Ms + 'ms' }}</b></span>
+          <span class="cap">会话记忆<b>{{ hero.memorySegments.toLocaleString() }} 段</b></span>
+          <span class="cap">工具能力<b>{{ hero.tools }} 项</b></span>
         </div>
       </div>
-      <div class="hero-mark" aria-hidden="true">智</div>
     </div>
 
-    <!-- 应用入口卡片区：2 × 2 大卡片撑满视口 -->
-    <div class="section-title">
-      应用中心
-      <span v-if="loading" class="loading-hint">加载中…</span>
-    </div>
-
-    <el-alert
-      v-if="error"
-      class="load-error"
-      type="warning"
-      :title="`统计数字加载失败：${error}`"
-      description="应用入口不受影响，仍可正常打开；下方指标显示为 — 表示暂未取到。"
-      :closable="false"
-      show-icon
-    >
-      <template #default>
-        <el-button link type="primary" @click="load">重试</el-button>
-      </template>
-    </el-alert>
-
-    <div class="app-grid">
-      <div v-for="app in apps" :key="app.key" class="app-card">
-        <div class="app-head">
-          <span class="app-tile" :class="app.tone"><el-icon class="app-icon"><component :is="iconOf(app.key)" /></el-icon></span>
-          <span class="app-name">{{ app.name }}</span>
-          <span class="status" :class="app.status"><i class="dot" />{{ app.statusText }}</span>
-        </div>
-        <div class="app-type">{{ app.type }}</div>
-        <div class="app-metrics">
-          <div v-for="m in app.metrics" :key="m.label" class="metric">
-            <span class="metric-value">{{ m.value }}</span>
-            <span class="metric-label">{{ m.label }}</span>
+    <div class="page-body">
+      <div class="section-head">
+        <h2 class="section-title">应用中心</h2>
+        <div class="head-tools">
+          <el-button v-if="view === 'list'" size="small" class="outline-btn" @click="specVisible = true">
+            ＋ 新建 Agent 应用
+          </el-button>
+          <div class="view-toggle">
+            <button :class="{ active: view === 'grid' }" title="卡片视图" @click="setView('grid')">
+              <el-icon><Grid /></el-icon>卡片
+            </button>
+            <button :class="{ active: view === 'list' }" title="列表视图" @click="setView('list')">
+              <el-icon><Menu /></el-icon>列表
+            </button>
           </div>
         </div>
-        <div class="app-actions">
-          <el-button type="primary" size="default" class="open-btn" @click="router.push(app.to)">打开工作台</el-button>
-          <!-- 日志含会话 id / traceId / 业务明细，属运维视图，只对管理员开放 -->
-          <el-button v-if="workbench?.admin" link type="primary" @click="openLogs(app.key)">查看日志</el-button>
+      </div>
+
+      <el-alert
+        v-if="error"
+        class="load-error"
+        type="warning"
+        :title="`统计数字加载失败：${error}`"
+        description="应用入口不受影响，仍可正常打开；指标显示 — 表示暂未取到。"
+        :closable="false"
+        show-icon
+      >
+        <template #default>
+          <el-button link type="primary" @click="load">重试</el-button>
+        </template>
+      </el-alert>
+
+      <!-- 卡片视图 -->
+      <div v-if="view === 'grid'" class="app-grid">
+        <div v-for="app in apps" :key="app.key" class="app-card">
+          <div class="app-head">
+            <span class="app-tile" :class="app.tone">
+              <el-icon><component :is="iconOf(app.key)" /></el-icon>
+            </span>
+            <span class="app-name">{{ app.name }}</span>
+            <span class="status" :class="app.status"><i class="dot" />{{ app.statusText }}</span>
+          </div>
+          <div class="app-type">{{ app.type }}</div>
+          <div class="metrics-row">
+            <template v-for="(m, i) in app.metrics" :key="m.label">
+              <span v-if="i" class="metric-sep">|</span>
+              <span class="metric"><b>{{ m.value }}</b>{{ m.label }}</span>
+            </template>
+          </div>
+          <div class="app-actions">
+            <el-button type="primary" @click="router.push(app.to)">打开工作台</el-button>
+            <!-- 日志含会话 id / traceId / 业务明细，属运维视图，只对管理员开放 -->
+            <el-button v-if="workbench?.admin" class="outline-btn" @click="openLogs(app.key)">查看日志</el-button>
+          </div>
+        </div>
+
+        <div class="app-card create-card" @click="specVisible = true">
+          <el-icon class="create-icon"><Plus /></el-icon>
+          <div class="create-title">新建 Agent 应用</div>
+          <div class="create-sub">用一份 AgentSpec 声明接入，或通过平台 API 对接已有应用</div>
+          <div class="app-actions center">
+            <el-button class="outline-btn" @click.stop="specVisible = true">用 JSON 注册</el-button>
+            <el-button link type="primary" @click.stop="router.push('/developers')">查看 API 文档</el-button>
+          </div>
         </div>
       </div>
 
-      <!-- 新建 Agent / 接入 API -->
-      <div class="app-card create-card">
-        <el-icon class="create-icon"><Plus /></el-icon>
-        <div class="create-title">新建 Agent 应用</div>
-        <div class="create-sub">用一份 AgentSpec 声明接入，或通过平台 API 对接已有应用</div>
-        <div class="app-actions center">
-          <el-button class="outline-btn" @click="specVisible = true">用 JSON 注册</el-button>
-          <el-button link type="primary" @click="router.push('/developers')">查看 API 文档</el-button>
-        </div>
-      </div>
+      <!-- 列表视图：同样的数据，信息密度更高 -->
+      <el-table v-else :data="apps" stripe class="app-table">
+        <el-table-column label="应用" width="230">
+          <template #default="{ row }">
+            <div class="row-app">
+              <span class="app-tile sm" :class="row.tone">
+                <el-icon><component :is="iconOf(row.key)" /></el-icon>
+              </span>
+              <span class="app-name">{{ row.name }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="type" label="说明" min-width="300" show-overflow-tooltip />
+        <el-table-column label="指标" min-width="300">
+          <template #default="{ row }">
+            <span v-for="(m, i) in row.metrics" :key="m.label" class="metric">
+              <span v-if="i" class="metric-sep">|</span><b>{{ m.value }}</b>{{ m.label }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <span class="status" :class="row.status"><i class="dot" />{{ row.statusText }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="190" align="right">
+          <template #default="{ row }">
+            <el-button type="primary" size="small" @click="router.push(row.to)">打开工作台</el-button>
+            <el-button v-if="workbench?.admin" link type="primary" @click="openLogs(row.key)">日志</el-button>
+          </template>
+        </el-table-column>
+        <template #empty><el-empty description="暂无应用" /></template>
+      </el-table>
     </div>
 
-    <!-- 平台状态栏：数字全部来自运行日志表与 Spring 已注册的路由 -->
+    <!-- 平台状态栏：通栏 -->
     <div class="platform-bar">
-      <div class="pb-metrics">
-        <span class="pb-item">平台事件（今日）<b>{{ platform.eventsToday.toLocaleString() }}</b> 次</span>
-        <span class="sep">·</span>
-        <span class="pb-item">平均延迟 <b>{{ platform.avgLatencyMs == null ? '—' : platform.avgLatencyMs + 'ms' }}</b></span>
-        <span class="sep">·</span>
-        <span class="pb-item">成功率 <b>{{ platform.successRate }}%</b></span>
-        <span class="sep">·</span>
-        <span class="pb-item">已注册接口 <b>{{ platform.endpoints }}</b> 个</span>
-      </div>
-      <div class="pb-links">
-        <span class="pb-updated">数据更新于 {{ platform.updatedAt }}</span>
-        <el-button size="small" class="outline-btn" @click="router.push('/developers')">开发者文档</el-button>
-        <el-button v-if="workbench?.admin" size="small" class="outline-btn" @click="router.push('/logs')">查看日志</el-button>
-        <el-button v-if="workbench?.admin" size="small" class="outline-btn" @click="router.push('/admin/dashboard')">平台监控</el-button>
+      <div class="bar-inner">
+        <div class="pb-metrics">
+          <span class="pb-item">平台事件（今日）<b>{{ platform.eventsToday.toLocaleString() }}</b> 次</span>
+          <span class="pb-sep">·</span>
+          <span class="pb-item">平均延迟 <b>{{ platform.avgLatencyMs == null ? '—' : platform.avgLatencyMs + 'ms' }}</b></span>
+          <span class="pb-sep">·</span>
+          <span class="pb-item">成功率 <b>{{ platform.successRate }}%</b></span>
+          <span class="pb-sep">·</span>
+          <span class="pb-item">已注册接口 <b>{{ platform.endpoints }}</b> 个</span>
+        </div>
+        <div class="pb-links">
+          <span class="pb-updated">数据更新于 {{ platform.updatedAt }}</span>
+          <el-button size="small" class="outline-btn" @click="router.push('/developers')">开发者文档</el-button>
+          <el-button v-if="workbench?.admin" size="small" class="outline-btn" @click="router.push('/logs')">查看日志</el-button>
+          <el-button v-if="workbench?.admin" size="small" class="outline-btn" @click="router.push('/admin/dashboard')">平台监控</el-button>
+        </div>
       </div>
     </div>
 
@@ -126,15 +171,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { Grid, Menu, OfficeBuilding, Collection, Microphone, Plus } from '@element-plus/icons-vue'
 import { auth, roleLabel } from '../api/auth'
 import {
   loadWorkbench, notifications, probeAppRunning,
   type AppCard, type Workbench,
 } from '../api/platform'
-import {
-  Lightning, Connection, Cpu, SetUp, OfficeBuilding, Collection,
-  Microphone, Plus,
-} from '@element-plus/icons-vue'
 
 const router = useRouter()
 const specVisible = ref(false)
@@ -142,6 +184,15 @@ const specVisible = ref(false)
 const workbench = ref<Workbench | null>(null)
 const loading = ref(false)
 const error = ref('')
+
+/** 视图偏好存本地：用户选了列表，刷新后不该变回卡片 */
+const VIEW_KEY = 'aiwb-app-view'
+const view = ref<'grid' | 'list'>((localStorage.getItem(VIEW_KEY) as 'grid' | 'list') || 'grid')
+
+function setView(next: 'grid' | 'list') {
+  view.value = next
+  localStorage.setItem(VIEW_KEY, next)
+}
 
 /**
  * 应用清单是**产品结构**（有哪几个应用、叫什么、点进去是哪儿），不是统计结果。
@@ -236,14 +287,6 @@ const ICONS: Record<string, object> = {
 }
 const iconOf = (key: string) => ICONS[key] ?? OfficeBuilding
 
-const greeting = computed(() => {
-  const h = new Date().getHours()
-  if (h < 6) return '夜深了'
-  if (h < 12) return '早上好'
-  if (h < 18) return '下午好'
-  return '晚上好'
-})
-
 onMounted(load)
 </script>
 
@@ -258,134 +301,140 @@ onMounted(load)
   --el-color-primary-light-9: #e9f1f9;
   --el-color-primary-dark-2: #09417f;
 
-  /* 容器驱动布局：撑满视口，消除下方空白 */
-  min-height: calc(100vh - 120px);
+  min-height: calc(100vh - 56px);
   display: flex;
   flex-direction: column;
+  background: #f5f7fa;
 }
 
-/* 品牌英雄区：深蓝渐变 + 星点装饰 + 右侧水印，呼应登录页 */
-.hero {
-  position: relative;
-  overflow: hidden;
+/* 通栏条：左右贴边、分隔线通到底；内容仍按 1280px 居中，避免宽屏下文字飘到屏幕边缘 */
+.bar-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background:
-    radial-gradient(620px 300px at 85% -20%, rgba(255, 255, 255, 0.15) 0%, transparent 60%),
-    linear-gradient(160deg, #0d376e 0%, #0b4f9e 55%, #1560b8 100%);
-  border-radius: 10px;
-  padding: 26px 32px;
-  margin-bottom: 24px;
-  color: #fff;
+  gap: 16px;
+  flex-wrap: wrap;
 }
-.hero .mesh {
-  position: absolute;
-  left: 0;
-  top: 0;
-  pointer-events: none;
-  opacity: 0.8;
+
+/* 上下文条 */
+.context-bar {
+  background: #fff;
+  border-bottom: 1px solid #e4e7ec;
+  padding: 10px 0;
 }
-.hero h1 {
-  margin: 0 0 8px;
-  font-size: 26px;
-  font-weight: 800;
-  letter-spacing: 1px;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+.ctx-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #1f2d3d;
 }
-.tenant-line {
-  margin: 0;
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 13.5px;
-}
+.ctx-org { font-weight: 600; }
+.ctx-sep { color: #c8ced8; }
+.ctx-role { color: #5a6b80; }
 .env-tag {
-  font-size: 12px;
-  color: #7ee2a8;
-  background: rgba(46, 160, 90, 0.2);
-  border: 1px solid rgba(126, 226, 168, 0.4);
+  font-size: 11.5px;
+  color: #0a8f3c;
+  background: #e8f7ee;
+  border: 1px solid #b7e2c6;
   border-radius: 4px;
   padding: 2px 8px;
   font-weight: 600;
 }
-/* 能力胶囊：玻璃质感，与登录页同语言 */
-.cap-row {
-  display: flex;
+
+/* 能力胶囊：原型里在上下文条右侧，浅色底、无边框感 */
+.ctx-caps {
+  display: inline-flex;
   align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 18px;
 }
 .cap {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 999px;
-  padding: 6px 14px;
-  backdrop-filter: blur(4px);
+  color: #5a6b80;
+  background: #f0f4f9;
+  border-radius: 6px;
+  padding: 5px 12px;
   white-space: nowrap;
 }
 .cap b {
+  color: #1f2d3d;
   font-weight: 700;
-  color: #fff;
-  margin-left: 2px;
   font-variant-numeric: tabular-nums;
 }
-.cap .el-icon { color: #9cc4ff; font-size: 14px; }
-.hero-mark {
-  position: absolute;
-  right: 30px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 150px;
-  font-weight: 800;
-  line-height: 1;
-  color: rgba(255, 255, 255, 0.07);
-  user-select: none;
-  pointer-events: none;
+
+/* 主体 */
+.page-body {
+  flex: 1;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 22px 24px 26px;
 }
 
-/* 应用中心：2 × 2 大卡片，行等高、区域撑满剩余视口 */
-.section-title {
+.section-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 18px;
-  font-weight: 700;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.section-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
   color: #1f2d3d;
-  margin-bottom: 14px;
+  letter-spacing: 0.5px;
 }
-.section-title::before {
-  content: '';
-  width: 4px;
-  height: 16px;
-  background: #0b4f9e;
-  border-radius: 2px;
+.head-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
 }
-.loading-hint {
-  font-size: 12px;
-  font-weight: 400;
-  color: #98a2b0;
-  margin-left: 6px;
+
+/* 卡片 / 列表 切换：分段控件样式 */
+.view-toggle {
+  display: inline-flex;
+  background: #eef1f5;
+  border-radius: 8px;
+  padding: 3px;
 }
-.load-error {
-  margin-bottom: 14px;
+.view-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: #5a6b80;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
 }
+.view-toggle button.active {
+  background: #fff;
+  color: #0b4f9e;
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(15, 40, 80, 0.12);
+}
+
+.load-error { margin-bottom: 16px; }
+
+/* 卡片网格 */
 .app-grid {
-  flex: 1;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: 1fr;
   gap: 16px;
-  margin-bottom: 24px;
 }
 .app-card {
   display: flex;
   flex-direction: column;
-  min-height: 260px;
   background: #fff;
   border: 1px solid #e5e8ec;
   border-radius: 10px;
@@ -394,16 +443,15 @@ onMounted(load)
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
 .app-card:hover {
-  transform: translateY(-3px);
+  transform: translateY(-2px);
   border-color: #9fc3e8;
-  box-shadow: 0 10px 24px rgba(11, 79, 158, 0.12);
+  box-shadow: 0 10px 24px rgba(11, 79, 158, 0.1);
 }
 .app-head {
   display: flex;
   align-items: center;
   gap: 12px;
 }
-/* 图标瓷砖：每个应用一个品牌色渐变 */
 .app-tile {
   width: 40px;
   height: 40px;
@@ -413,74 +461,86 @@ onMounted(load)
   justify-content: center;
   flex-shrink: 0;
   color: #fff;
+  font-size: 20px;
 }
-.app-tile .app-icon { font-size: 20px; color: #fff; }
-.app-tile.blue {
-  background: linear-gradient(135deg, #2f7bff, #0b4f9e);
-  box-shadow: 0 4px 10px rgba(11, 79, 158, 0.25);
+.app-tile.sm { width: 28px; height: 28px; font-size: 15px; border-radius: 8px; }
+.app-tile.blue { background: linear-gradient(135deg, #e3eefb, #d2e4f7); color: #0b4f9e; }
+.app-tile.violet { background: linear-gradient(135deg, #efe8fd, #e2d8fa); color: #6d28d9; }
+.app-tile.green { background: linear-gradient(135deg, #e2f6ed, #d0efe0); color: #047857; }
+.app-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1f2d3d;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.app-tile.violet {
-  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
-  box-shadow: 0 4px 10px rgba(109, 40, 217, 0.25);
-}
-.app-tile.green {
-  background: linear-gradient(135deg, #10b981, #047857);
-  box-shadow: 0 4px 10px rgba(4, 120, 87, 0.25);
-}
-.app-name { font-size: 16px; font-weight: 700; color: #1f2d3d; flex: 1; }
+
+/* 状态徽标：描边样式，与原型一致 */
 .status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 5px;
+  padding: 2px 9px;
   flex-shrink: 0;
+  white-space: nowrap;
 }
-.status .dot { width: 7px; height: 7px; border-radius: 50%; }
-.status.running { color: #0a8f3c; }
+.status .dot { width: 6px; height: 6px; border-radius: 50%; }
+.status.running { color: #0a8f3c; background: #f0faf4; border: 1px solid #b7e2c6; }
 .status.running .dot { background: #0a8f3c; }
-.status.building { color: #b26a00; }
-.status.building .dot { background: #e6a23c; }
-.status.ready { color: #0b4f9e; }
+.status.ready { color: #0b4f9e; background: #f0f6fc; border: 1px solid #c3daf0; }
 .status.ready .dot { background: #0b4f9e; }
-.status.offline { color: #98a2b0; }
-.status.offline .dot { background: #c0c4cc; }
+.status.offline { color: #8a97a8; background: #f5f6f8; border: 1px solid #dfe3e9; }
+.status.offline .dot { background: #b6bcc6; }
 
 .app-type {
   font-size: 13px;
   color: #8a97a8;
-  line-height: 1.7;
-  margin: 10px 0 14px;
+  line-height: 1.75;
+  margin: 10px 0 16px;
+  min-height: 45px;
 }
-.app-metrics {
+
+/* 指标行：原型里是一行内联，用竖线分隔 */
+.metrics-row {
   display: flex;
-  gap: 48px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   border-top: 1px solid #f0f2f6;
   padding-top: 13px;
-  margin-bottom: 13px;
+  margin-bottom: 16px;
 }
-.metric { display: flex; flex-direction: column; }
-.metric-value {
-  font-size: 20px;
+.metric {
+  font-size: 12px;
+  color: #98a2b0;
+  white-space: nowrap;
+}
+.metric b {
+  font-size: 19px;
   font-weight: 700;
   color: #0b4f9e;
   font-variant-numeric: tabular-nums;
+  margin-right: 4px;
 }
-.metric-label { font-size: 12px; color: #98a2b0; margin-top: 3px; }
+.metric-sep { color: #e0e4ea; }
+
 .app-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   margin-top: auto;
-  border-top: 1px solid #f0f2f6;
-  padding-top: 12px;
 }
-.app-actions.center { justify-content: center; }
-.open-btn { background: #0b4f9e; border-color: #0b4f9e; }
+.app-actions.center { justify-content: center; margin-top: 6px; }
 
-/* 次要操作：白底描边，与主操作区分 */
+/* 次要操作：白底描边 */
 .outline-btn {
   background: #fff;
-  border-color: #9fbcd9;
+  border-color: #b9cee3;
   color: #0b4f9e;
 }
 .outline-btn:hover {
@@ -498,29 +558,36 @@ onMounted(load)
   border-color: #b9c8da;
   background: #fbfdff;
   gap: 8px;
+  cursor: pointer;
 }
 .create-icon { font-size: 30px; color: #0b4f9e; }
 .create-title { font-size: 16px; font-weight: 700; color: #1f2d3d; }
 .create-sub { font-size: 12.5px; color: #8a97a8; line-height: 1.7; margin-bottom: 10px; max-width: 320px; }
 
-/* 平台状态栏：浅蓝底呼应顶部上下文区，弱化视觉权重 */
+/* 列表视图 */
+.app-table { font-size: 13px; }
+.row-app { display: flex; align-items: center; gap: 10px; }
+
+/* 页脚通栏 */
 .platform-bar {
+  background: #fff;
+  border-top: 1px solid #e4e7ec;
+  padding: 12px 0;
+}
+.pb-metrics {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  background: #f0f5fb;
-  border: 1px solid #dbe7f3;
-  border-radius: 6px;
-  padding: 13px 20px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   color: #5a6b80;
   font-size: 12.5px;
 }
-.pb-metrics { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; }
 .pb-item b {
   color: #1f2d3d;
   font-variant-numeric: tabular-nums;
   margin: 0 2px;
 }
+.pb-sep { color: #c8ced8; }
 .pb-links {
   display: flex;
   align-items: center;
@@ -545,7 +612,7 @@ onMounted(load)
 }
 .spec-tip { font-size: 12.5px; color: #8a97a8; margin: 10px 0 0; }
 
-@media (max-width: 860px) {
+@media (max-width: 900px) {
   .app-grid { grid-template-columns: 1fr; }
 }
 </style>

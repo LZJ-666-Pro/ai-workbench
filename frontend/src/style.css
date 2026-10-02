@@ -205,3 +205,14 @@ input {
 input:focus {
   border-color: var(--accent);
 }
+
+/*
+ * 首页工作台：让出宽度与内边距的控制权（max-width: none + padding: 0），
+ * 由 HomeView 自己排版——上下文条与页脚要做成通栏（左右贴边、分隔线通到底），
+ * 这些在 .main 的居中限宽容器里做不到。
+ */
+.main.portal {
+  max-width: none;
+  padding: 0;
+}
+

@@ -82,4 +82,24 @@ public final class ConsoleDtos {
 
     public record LogSummary(long total, long success, long deny, long fail) {
     }
+
+    // ---------- 全局搜索 ----------
+
+    /** 搜索命中：应用入口（含日志页、管理后台等平台页） */
+    public record AppHit(String key, String name, String type, String to) {
+    }
+
+    /** 搜索命中：已注册的后端接口 */
+    public record EndpointHit(String method, String path) {
+    }
+
+    /**
+     * 分组搜索结果。三组分别来自不同数据源：应用是静态产品目录、
+     * 日志查 platform_event_log、接口问 Spring 的 HandlerMapping。
+     */
+    public record SearchResult(
+            List<AppHit> apps,
+            List<LogRow> logs,
+            List<EndpointHit> endpoints) {
+    }
 }

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { auth, logout } from '../auth'
-import { loadPlatformLogs, loadWorkbench, probeAppRunning } from '../platform'
+import { loadPlatformLogs, loadWorkbench, probeAppRunning, searchPlatform } from '../platform'
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -63,6 +63,38 @@ describe('平台工作台接口', () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(403, { message: '需要管理员权限' })))
 
     await expect(loadPlatformLogs({})).rejects.toThrow('需要管理员权限')
+  })
+})
+
+describe('全局搜索', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    logout()
+  })
+
+  it('请求路径与后端 @GetMapping("/api/platform/search") 对齐，只有一个 /api', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, { apps: [], logs: [], endpoints: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await searchPlatform('转账')
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string]
+    expect(url).toBe('/bank/api/platform/search?q=%E8%BD%AC%E8%B4%A6&limit=5')
+    expect(url).not.toContain('/api/api/')
+  })
+
+  it('关键字里的 & 与空格被编码，不会截断查询串', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, { apps: [], logs: [], endpoints: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await searchPlatform('a&b c')
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string]
+    // 注意编码器的差别：searchPlatform 用 encodeURIComponent（空格 → %20），
+    // loadPlatformLogs 用 URLSearchParams（空格 → +）。两者在查询串里都合法，
+    // 但断言必须与实现用的编码器一致，否则测的是另一件事。
+    expect(url).toContain('q=a%26b%20c')
+    expect(url).toContain('&limit=5')
   })
 })
 
