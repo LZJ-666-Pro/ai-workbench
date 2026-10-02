@@ -40,6 +40,12 @@ public final class ConsoleDtos {
             Integer avgLatencyMs,
             Double successRate,
             long endpoints,
+            /** 平台应用总数（产品目录大小，前端再加"运行中"的实测结果凑成一对） */
+            long apps,
+            /** 今日会话数（去重 memoryId） */
+            long sessionsToday,
+            /** 今日 Token 消耗（输入 + 输出），成本视角的核心数字 */
+            long tokensToday,
             String updatedAt) {
     }
 

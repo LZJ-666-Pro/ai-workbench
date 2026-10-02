@@ -74,6 +74,12 @@ export interface PlatformStats {
   avgLatencyMs: number | null
   successRate: number
   endpoints: number
+  /** 平台应用总数（产品目录大小） */
+  apps: number
+  /** 今日会话数（去重 memoryId） */
+  sessionsToday: number
+  /** 今日 Token 消耗（输入 + 输出），成本视角的核心数字 */
+  tokensToday: number
   updatedAt: string
 }
 

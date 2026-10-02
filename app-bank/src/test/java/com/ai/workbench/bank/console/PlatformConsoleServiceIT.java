@@ -175,6 +175,27 @@ class PlatformConsoleServiceIT {
         }
 
         @Test
+        @DisplayName("平台总应用数只数三个业务应用，不含日志页/管理后台/开发者文档")
+        void appCountExcludesPlatformPages() {
+            // 搜索目录里还包含平台自身的功能页（共 6 条），拿它当"应用数"会把 3 说成 6
+            Workbench wb = service().workbench(false);
+
+            assertThat(wb.platform().apps()).isEqualTo(3);
+            assertThat(wb.apps()).as("卡片数应与应用数一致").hasSize(3);
+        }
+
+        @Test
+        @DisplayName("今日 Token 消耗取 llm_usage 台账的输入+输出之和")
+        void tokensTodayComesFromUsageLedger() {
+            jdbc().update("""
+                    INSERT INTO llm_usage (usage_scope, memory_id, agent, model, input_tokens, output_tokens)
+                    VALUES ('bank:zhangsan', 'bank:zhangsan:t', 'bank', 'qwen3.8-flash', 1200, 300)
+                    """);
+
+            assertThat(service().workbench(false).platform().tokensToday()).isEqualTo(1500);
+        }
+
+        @Test
         @DisplayName("成功率按今日事件计算，且没数据时是 0 而不是 100")
         void successRateIsHonestWhenEmpty() {
             event("bank", "tool", "queryAccount", "SUCCESS", null, now());

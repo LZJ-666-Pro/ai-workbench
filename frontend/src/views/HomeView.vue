@@ -10,10 +10,10 @@
           <span class="env-tag">生产环境</span>
         </div>
         <div class="ctx-caps">
-          <span class="cap">LLM 接入<b>{{ hero.models }} 个模型</b></span>
-          <span class="cap">SSE 流式<b>{{ hero.sseP95Ms == null ? '—' : hero.sseP95Ms + 'ms' }}</b></span>
-          <span class="cap">会话记忆<b>{{ hero.memorySegments.toLocaleString() }} 段</b></span>
-          <span class="cap">工具能力<b>{{ hero.tools }} 项</b></span>
+          <span class="cap"><el-icon><Document /></el-icon>LLM 接入<b>{{ hero.models }} 个模型</b></span>
+          <span class="cap"><el-icon><Lightning /></el-icon>SSE 流式<b>{{ hero.sseP95Ms == null ? '—' : hero.sseP95Ms + 'ms' }}</b></span>
+          <span class="cap"><el-icon><ChatDotRound /></el-icon>会话记忆<b>{{ hero.memorySegments.toLocaleString() }} 段</b></span>
+          <span class="cap"><el-icon><SetUp /></el-icon>工具能力<b>{{ hero.tools }} 项</b></span>
         </div>
       </div>
     </div>
@@ -57,29 +57,39 @@
             <span class="app-tile" :class="app.tone">
               <el-icon><component :is="iconOf(app.key)" /></el-icon>
             </span>
-            <span class="app-name">{{ app.name }}</span>
-            <span class="status" :class="app.status"><i class="dot" />{{ app.statusText }}</span>
+            <div class="app-head-main">
+              <div class="app-title-row">
+                <span class="app-name">{{ app.name }}</span>
+                <span class="status" :class="app.status"><i class="dot" />{{ app.statusText }}</span>
+              </div>
+              <div class="app-type">{{ app.type }}</div>
+            </div>
           </div>
-          <div class="app-type">{{ app.type }}</div>
           <div class="metrics-row">
-            <template v-for="(m, i) in app.metrics" :key="m.label">
-              <span v-if="i" class="metric-sep">|</span>
-              <span class="metric"><b>{{ m.value }}</b>{{ m.label }}</span>
-            </template>
+            <div v-for="m in app.metrics" :key="m.label" class="metric">
+              <span class="metric-value">{{ m.value }}</span>
+              <span class="metric-label">{{ m.label }}</span>
+            </div>
           </div>
           <div class="app-actions">
-            <el-button type="primary" @click="router.push(app.to)">打开工作台</el-button>
+            <el-button type="primary" class="open-btn" @click="router.push(app.to)">
+              打开工作台<el-icon class="btn-icon"><ArrowRight /></el-icon>
+            </el-button>
             <!-- 日志含会话 id / traceId / 业务明细，属运维视图，只对管理员开放 -->
-            <el-button v-if="workbench?.admin" class="outline-btn" @click="openLogs(app.key)">查看日志</el-button>
+            <el-button v-if="workbench?.admin" class="outline-btn" @click="openLogs(app.key)">
+              <el-icon class="btn-icon"><Document /></el-icon>查看日志
+            </el-button>
           </div>
         </div>
 
         <div class="app-card create-card" @click="specVisible = true">
-          <el-icon class="create-icon"><Plus /></el-icon>
+          <span class="create-plus"><el-icon><Plus /></el-icon></span>
           <div class="create-title">新建 Agent 应用</div>
-          <div class="create-sub">用一份 AgentSpec 声明接入，或通过平台 API 对接已有应用</div>
+          <div class="create-sub">快速构建专属 AI Agent，扩展企业智能能力</div>
           <div class="app-actions center">
-            <el-button class="outline-btn" @click.stop="specVisible = true">用 JSON 注册</el-button>
+            <el-button class="outline-btn" @click.stop="specVisible = true">
+              <el-icon class="btn-icon"><Tickets /></el-icon>用 JSON 注册
+            </el-button>
             <el-button link type="primary" @click.stop="router.push('/developers')">查看 API 文档</el-button>
           </div>
         </div>
@@ -100,7 +110,7 @@
         <el-table-column prop="type" label="说明" min-width="300" show-overflow-tooltip />
         <el-table-column label="指标" min-width="300">
           <template #default="{ row }">
-            <span v-for="(m, i) in row.metrics" :key="m.label" class="metric">
+            <span v-for="(m, i) in row.metrics" :key="m.label" class="cell-metric">
               <span v-if="i" class="metric-sep">|</span><b>{{ m.value }}</b>{{ m.label }}
             </span>
           </template>
@@ -124,13 +134,13 @@
     <div class="platform-bar">
       <div class="bar-inner">
         <div class="pb-metrics">
-          <span class="pb-item">平台事件（今日）<b>{{ platform.eventsToday.toLocaleString() }}</b> 次</span>
-          <span class="pb-sep">·</span>
-          <span class="pb-item">平均延迟 <b>{{ platform.avgLatencyMs == null ? '—' : platform.avgLatencyMs + 'ms' }}</b></span>
-          <span class="pb-sep">·</span>
-          <span class="pb-item">成功率 <b>{{ platform.successRate }}%</b></span>
-          <span class="pb-sep">·</span>
-          <span class="pb-item">已注册接口 <b>{{ platform.endpoints }}</b> 个</span>
+          <span class="pb-item">平台总应用数: <b>{{ platform.apps }}</b></span>
+          <span class="pb-item">运行中应用: <b>{{ runningCount }}</b></span>
+          <span class="pb-item">今日总会话: <b>{{ platform.sessionsToday.toLocaleString() }}</b></span>
+          <span class="pb-item">今日总 Token 消耗: <b>{{ platform.tokensToday.toLocaleString() }}</b></span>
+          <el-tooltip content="按今日平台事件的成功率计算" placement="top">
+            <span class="pb-item">系统健康度: <b>{{ platform.successRate }}%</b></span>
+          </el-tooltip>
         </div>
         <div class="pb-links">
           <span class="pb-updated">数据更新于 {{ platform.updatedAt }}</span>
@@ -171,7 +181,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Grid, Menu, OfficeBuilding, Collection, Microphone, Plus } from '@element-plus/icons-vue'
+import {
+  Grid, Menu, OfficeBuilding, Collection, Microphone, Plus,
+  Document, Lightning, ChatDotRound, SetUp, ArrowRight, Tickets,
+} from '@element-plus/icons-vue'
 import { auth, roleLabel } from '../api/auth'
 import {
   loadWorkbench, notifications, probeAppRunning,
@@ -242,12 +255,18 @@ const apps = computed<AppCard[]>(() => {
 })
 
 /** 空态而不是写死的默认值：宁可显示 0 / —，也不显示一个编出来的漂亮数字 */
-const EMPTY_PLATFORM = { eventsToday: 0, avgLatencyMs: null, successRate: 0, endpoints: 0, updatedAt: '—' }
+const EMPTY_PLATFORM = {
+  eventsToday: 0, avgLatencyMs: null, successRate: 0, endpoints: 0,
+  apps: 0, sessionsToday: 0, tokensToday: 0, updatedAt: '—',
+}
 
 const platform = computed(() => workbench.value?.platform ?? EMPTY_PLATFORM)
 const hero = computed(() => workbench.value?.hero ?? {
   models: 0, sseP95Ms: null, memorySegments: 0, tools: 0,
 })
+
+/** 运行中应用数取实测探测结果，不是配置里写死的；探测未完成前为 0，完成后自动刷新 */
+const runningCount = computed(() => apps.value.filter(a => a.status === 'running').length)
 
 async function load() {
   loading.value = true
@@ -307,9 +326,11 @@ onMounted(load)
   background: #f5f7fa;
 }
 
-/* 通栏条：左右贴边、分隔线通到底；内容仍按 1280px 居中，避免宽屏下文字飘到屏幕边缘 */
+/* 通栏条：左右贴边、分隔线通到底；内容按 1600px 居中。
+   为什么不是 1280：在 1700px 级别的视口上，1280 会在两侧各留出 240px 死白，
+   整页看起来"内容挤在中间"——这正是原型的反面。1600 兼顾宽屏利用率与可读性。 */
 .bar-inner {
-  max-width: 1280px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 0 24px;
   display: flex;
@@ -355,13 +376,18 @@ onMounted(load)
 .cap {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   font-size: 12.5px;
   color: #5a6b80;
-  background: #f0f4f9;
+  background: #f7f9fc;
+  border: 1px solid #e3e9f0;
   border-radius: 6px;
   padding: 5px 12px;
   white-space: nowrap;
+}
+.cap .el-icon {
+  color: #7a8798;
+  font-size: 14px;
 }
 .cap b {
   color: #1f2d3d;
@@ -373,7 +399,7 @@ onMounted(load)
 .page-body {
   flex: 1;
   width: 100%;
-  max-width: 1280px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 22px 24px 26px;
 }
@@ -426,19 +452,22 @@ onMounted(load)
 
 .load-error { margin-bottom: 16px; }
 
-/* 卡片网格 */
+/* 卡片网格：grid-auto-rows: 1fr 让同一行的卡片等高，
+   否则内容少的那张会矮一截，视觉上参差不齐 */
 .app-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
   gap: 16px;
 }
 .app-card {
   display: flex;
   flex-direction: column;
+  min-height: 212px;
   background: #fff;
   border: 1px solid #e5e8ec;
   border-radius: 10px;
-  padding: 18px 22px;
+  padding: 22px 24px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
@@ -447,31 +476,40 @@ onMounted(load)
   border-color: #9fc3e8;
   box-shadow: 0 10px 24px rgba(11, 79, 158, 0.1);
 }
+/* 图标占左列，标题/状态/描述组成右列——描述因此与标题左对齐，与原型一致 */
 .app-head {
   display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.app-head-main {
+  flex: 1;
+  min-width: 0;
+}
+.app-title-row {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
 .app-tile {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #fff;
-  font-size: 20px;
+  font-size: 22px;
 }
 .app-tile.sm { width: 28px; height: 28px; font-size: 15px; border-radius: 8px; }
 .app-tile.blue { background: linear-gradient(135deg, #e3eefb, #d2e4f7); color: #0b4f9e; }
 .app-tile.violet { background: linear-gradient(135deg, #efe8fd, #e2d8fa); color: #6d28d9; }
 .app-tile.green { background: linear-gradient(135deg, #e2f6ed, #d0efe0); color: #047857; }
 .app-name {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   color: #1f2d3d;
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -500,42 +538,74 @@ onMounted(load)
 .app-type {
   font-size: 13px;
   color: #8a97a8;
-  line-height: 1.75;
-  margin: 10px 0 16px;
-  min-height: 45px;
+  line-height: 1.7;
+  margin: 8px 0 18px;
+  /* 固定两行的高度：不固定的话，描述一行与两行的卡片指标行会错开，
+     同一行里两张卡看着就不齐 */
+  min-height: 44px;
 }
 
-/* 指标行：原型里是一行内联，用竖线分隔 */
+/* 指标：数字在上、标签在下（原型里三个指标是这种堆叠式，视觉权重给足）。
+   margin-top:auto 把指标行及其之后的按钮一起推到底部——
+   整页只有这一处 auto，两处 auto 会把空白对半分，指标行就飘在中间了 */
 .metrics-row {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px 10px;
+  gap: 48px;
   border-top: 1px solid #f0f2f6;
-  padding-top: 13px;
+  padding-top: 14px;
+  margin-top: auto;
   margin-bottom: 16px;
 }
 .metric {
+  display: flex;
+  flex-direction: column;
+}
+.metric-value {
+  font-size: 25px;
+  font-weight: 700;
+  color: #1f2d3d;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.metric-label {
+  font-size: 12px;
+  color: #98a2b0;
+  margin-top: 3px;
+}
+
+/* 列表视图的指标是一行内联，与卡片的堆叠式分开命名，避免互相覆盖 */
+.cell-metric {
   font-size: 12px;
   color: #98a2b0;
   white-space: nowrap;
 }
-.metric b {
-  font-size: 19px;
+.cell-metric b {
+  font-size: 15px;
   font-weight: 700;
-  color: #0b4f9e;
+  color: #1f2d3d;
   font-variant-numeric: tabular-nums;
   margin-right: 4px;
 }
-.metric-sep { color: #e0e4ea; }
+.metric-sep {
+  color: #e0e4ea;
+  margin: 0 8px;
+}
 
 .app-actions {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: auto;
 }
-.app-actions.center { justify-content: center; margin-top: 6px; }
+.app-actions.center { justify-content: center; }
+.btn-icon {
+  margin-left: 5px;
+  font-size: 13px;
+}
+/* 白底按钮里的图标间距要小一些，且不必再跟一个箭头的位置 */
+.outline-btn .btn-icon {
+  margin-left: 0;
+  margin-right: 5px;
+}
 
 /* 次要操作：白底描边 */
 .outline-btn {
@@ -549,7 +619,7 @@ onMounted(load)
   color: #0b4f9e;
 }
 
-/* 新建 Agent 卡：虚线占位 */
+/* 新建 Agent 卡：虚线占位，蓝色圆形 ＋ 与原型一致 */
 .create-card {
   align-items: center;
   justify-content: center;
@@ -557,12 +627,23 @@ onMounted(load)
   border-style: dashed;
   border-color: #b9c8da;
   background: #fbfdff;
-  gap: 8px;
+  gap: 4px;
   cursor: pointer;
 }
-.create-icon { font-size: 30px; color: #0b4f9e; }
-.create-title { font-size: 16px; font-weight: 700; color: #1f2d3d; }
-.create-sub { font-size: 12.5px; color: #8a97a8; line-height: 1.7; margin-bottom: 10px; max-width: 320px; }
+.create-plus {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: #0b4f9e;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  margin-bottom: 8px;
+}
+.create-title { font-size: 17px; font-weight: 700; color: #1f2d3d; }
+.create-sub { font-size: 12.5px; color: #8a97a8; line-height: 1.7; margin-bottom: 14px; max-width: 320px; }
 
 /* 列表视图 */
 .app-table { font-size: 13px; }
@@ -578,16 +659,16 @@ onMounted(load)
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 10px;
-  color: #5a6b80;
+  gap: 10px 26px;
+  color: #7a8798;
   font-size: 12.5px;
 }
 .pb-item b {
-  color: #1f2d3d;
+  color: #12263f;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
-  margin: 0 2px;
+  margin-left: 4px;
 }
-.pb-sep { color: #c8ced8; }
 .pb-links {
   display: flex;
   align-items: center;

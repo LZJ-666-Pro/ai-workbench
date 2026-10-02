@@ -151,7 +151,16 @@ public class PlatformConsoleService {
         Integer avgLatency = jdbc.queryForObject(
                 "SELECT ROUND(AVG(duration_ms)) FROM platform_event_log "
                         + "WHERE duration_ms IS NOT NULL AND " + TODAY, Integer.class);
+        long sessionsToday = count("""
+                SELECT COUNT(DISTINCT memory_id) FROM platform_event_log
+                WHERE memory_id IS NOT NULL AND DATE(created_at) = CURDATE()
+                """);
+        // Token 消耗取 llm_usage 台账（护栏那张表），它记的才是真实的计费用量；
+        // 运行日志里的 tokens 是对话事件的附带信息，二者口径不同
+        long tokensToday = count("SELECT COALESCE(SUM(input_tokens + output_tokens), 0) "
+                + "FROM llm_usage WHERE created_at >= CURDATE()");
         return new PlatformStats(eventsToday, avgLatency, rate(TODAY), apiEndpoints(),
+                AGENT_APPS.size(), sessionsToday, tokensToday,
                 LocalDateTime.now().format(TIME));
     }
 
@@ -259,7 +268,7 @@ public class PlatformConsoleService {
     // ==================== 全局搜索 ====================
 
     /**
-     * 平台产品目录：搜索「应用」这一组的数据源。
+     * 平台产品目录：搜索「应用」这一组的数据源，也用来数「平台总应用数」。
      *
      * 为什么是静态目录而不是查库：这是「平台上有哪些入口」的产品事实，
      * 不是业务数据——库里没有也不该有「开发者文档」这张表。
@@ -272,19 +281,30 @@ public class PlatformConsoleService {
     private record AppEntry(String key, String name, String type, String to, String keywords) {
     }
 
-    private static final List<AppEntry> APP_CATALOG = List.of(
+    /**
+     * 三个业务 Agent 应用——工作台上的卡片就是它们，页脚「平台总应用数」数的也是它们。
+     * 与下面的平台页面分开：日志页/管理后台/开发者文档是平台自身的功能页，
+     * 把它们也算进"应用数"会把 3 说成 6（本人已犯过这个错）。
+     */
+    private static final List<AppEntry> AGENT_APPS = List.of(
             new AppEntry("bank", "银行助手「小银」", "交易型 Agent · 工具调用 + 流式对话", "/bank",
                     "转账 余额 账户 交易 流水 风控 确认单 银行 客服"),
             new AppEntry("knowledge", "个人知识库", "检索型 Agent · 多源路由 + RAG", "/knowledge",
                     "知识库 文档 检索 rag 引用 制度 产品手册 监管 向量"),
             new AppEntry("interview", "面试模拟器", "流程型 Agent · 结构化评分", "/interview",
-                    "面试 评分 简历 追问 评估 候选人 招聘"),
+                    "面试 评分 简历 追问 评估 候选人 招聘"));
+
+    /** 平台自身的功能页，可被搜索到，但不计入应用数 */
+    private static final List<AppEntry> PLATFORM_PAGES = List.of(
             new AppEntry("logs", "平台运行日志", "对话 / 工具调用 / 登录 / 护栏拦截的记录", "/logs",
                     "日志 运行记录 traceid 审计 排障 报错"),
             new AppEntry("admin", "管理后台", "客户 360 / 审批中心 / 资金管理 / 配置中心", "/admin",
                     "管理 后台 客户 审批 资金 限额 配置 用户"),
             new AppEntry("developers", "开发者文档", "AgentSpec 声明与平台 API 说明", "/developers",
                     "接口 api 文档 agentspec 接入 开发者"));
+
+    private static final List<AppEntry> APP_CATALOG =
+            java.util.stream.Stream.concat(AGENT_APPS.stream(), PLATFORM_PAGES.stream()).toList();
 
     /**
      * 全局搜索：应用入口（静态目录）+ 运行日志（查库）+ 已注册接口（问 Spring）。
