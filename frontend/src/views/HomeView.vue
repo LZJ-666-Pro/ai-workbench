@@ -22,8 +22,8 @@
       <div class="section-head">
         <h2 class="section-title">应用中心</h2>
         <div class="head-tools">
-          <el-button v-if="view === 'list'" size="small" class="outline-btn" @click="specVisible = true">
-            ＋ 新建 Agent 应用
+          <el-button v-if="view === 'list'" type="primary" @click="specVisible = true">
+            <el-icon class="btn-icon"><Plus /></el-icon>新建 Agent 应用
           </el-button>
           <div class="view-toggle">
             <button :class="{ active: view === 'grid' }" title="卡片视图" @click="setView('grid')">
@@ -95,39 +95,48 @@
         </div>
       </div>
 
-      <!-- 列表视图：同样的数据，信息密度更高 -->
-      <el-table v-else :data="apps" stripe class="app-table">
-        <el-table-column label="应用" width="230">
-          <template #default="{ row }">
-            <div class="row-app">
-              <span class="app-tile sm" :class="row.tone">
-                <el-icon><component :is="iconOf(row.key)" /></el-icon>
-              </span>
-              <span class="app-name">{{ row.name }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column prop="type" label="说明" min-width="300" show-overflow-tooltip />
-        <el-table-column label="指标" min-width="300">
-          <template #default="{ row }">
-            <span v-for="(m, i) in row.metrics" :key="m.label" class="cell-metric">
-              <span v-if="i" class="metric-sep">|</span><b>{{ m.value }}</b>{{ m.label }}
+      <!--
+        列表视图：不用 el-table。
+        原型的行是"图标 + 名称 + 描述"组成的身份块（描述折在名称下方），
+        再加指标/状态/操作三列；el-table 的边框、表头底色与固定行高都拧不过来，
+        用 grid 自己排更直接，也更好控制行高与分隔线。
+      -->
+      <div v-else class="app-list">
+        <div class="list-head">
+          <span>应用</span>
+          <span>指标</span>
+          <span>状态</span>
+          <span class="ta-right">操作</span>
+        </div>
+
+        <div v-for="app in apps" :key="app.key" class="list-row">
+          <div class="cell-app">
+            <!-- 列表里图标用实色块（卡片里是浅色块）：行内需要更强的视觉锚点 -->
+            <span class="app-tile solid" :class="app.tone">
+              <el-icon><component :is="iconOf(app.key)" /></el-icon>
             </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <span class="status" :class="row.status"><i class="dot" />{{ row.statusText }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="190" align="right">
-          <template #default="{ row }">
-            <el-button type="primary" size="small" @click="router.push(row.to)">打开工作台</el-button>
-            <el-button v-if="workbench?.admin" link type="primary" @click="openLogs(row.key)">日志</el-button>
-          </template>
-        </el-table-column>
-        <template #empty><el-empty description="暂无应用" /></template>
-      </el-table>
+            <div class="cell-app-main">
+              <div class="app-name">{{ app.name }}</div>
+              <div class="app-desc">{{ app.type }}</div>
+            </div>
+          </div>
+          <div class="cell-metrics">
+            <template v-for="(m, i) in app.metrics" :key="m.label">
+              <span v-if="i" class="cm-sep">·</span>
+              <span class="cm"><b>{{ m.value }}</b>{{ m.label }}</span>
+            </template>
+          </div>
+          <div class="cell-status">
+            <span class="badge" :class="app.status">{{ app.statusText }}</span>
+          </div>
+          <div class="cell-actions">
+            <el-button type="primary" size="default" @click="router.push(app.to)">打开工作台</el-button>
+            <el-button v-if="workbench?.admin" link type="primary" @click="openLogs(app.key)">日志</el-button>
+          </div>
+        </div>
+
+        <div v-if="!apps.length" class="list-empty"><el-empty description="暂无应用" /></div>
+      </div>
     </div>
 
     <!-- 平台状态栏：通栏 -->
@@ -424,30 +433,37 @@ onMounted(load)
   gap: 12px;
 }
 
-/* 卡片 / 列表 切换：分段控件样式 */
+/* 卡片 / 列表 切换：描边分段控件，选中项实心蓝（与原型一致） */
 .view-toggle {
   display: inline-flex;
-  background: #eef1f5;
+  background: #fff;
+  border: 1px solid #d9e0e8;
   border-radius: 8px;
-  padding: 3px;
+  overflow: hidden;
 }
 .view-toggle button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   font-size: 12.5px;
-  color: #5a6b80;
-  background: transparent;
+  color: #4a5a6d;
+  background: #fff;
   border: 0;
-  border-radius: 6px;
-  padding: 5px 12px;
+  border-radius: 0;
+  padding: 8px 16px;
   cursor: pointer;
 }
+.view-toggle button + button {
+  border-left: 1px solid #d9e0e8;
+}
 .view-toggle button.active {
-  background: #fff;
-  color: #0b4f9e;
-  font-weight: 700;
-  box-shadow: 0 1px 3px rgba(15, 40, 80, 0.12);
+  background: #0b4f9e;
+  color: #fff;
+  font-weight: 600;
+}
+/* 新建按钮的图标在前，间距与"图标在后"的按钮相反 */
+.head-tools .el-button .btn-icon {
+  margin: 0 6px 0 0;
 }
 
 .load-error { margin-bottom: 16px; }
@@ -502,10 +518,15 @@ onMounted(load)
   flex-shrink: 0;
   font-size: 22px;
 }
-.app-tile.sm { width: 28px; height: 28px; font-size: 15px; border-radius: 8px; }
 .app-tile.blue { background: linear-gradient(135deg, #e3eefb, #d2e4f7); color: #0b4f9e; }
 .app-tile.violet { background: linear-gradient(135deg, #efe8fd, #e2d8fa); color: #6d28d9; }
 .app-tile.green { background: linear-gradient(135deg, #e2f6ed, #d0efe0); color: #047857; }
+/* 实色变体（列表视图用）：浅色块在一行行的列表里不够醒目，需要更强的视觉锚点。
+   三类的选择器比基础色多一个类，优先级天然更高，不必加 !important */
+.app-tile.solid { color: #fff; }
+.app-tile.solid.blue { background: linear-gradient(135deg, #4a90e2, #0b4f9e); }
+.app-tile.solid.violet { background: linear-gradient(135deg, #a78bfa, #6d28d9); }
+.app-tile.solid.green { background: linear-gradient(135deg, #34d399, #047857); }
 .app-name {
   font-size: 17px;
   font-weight: 700;
@@ -573,24 +594,6 @@ onMounted(load)
   margin-top: 3px;
 }
 
-/* 列表视图的指标是一行内联，与卡片的堆叠式分开命名，避免互相覆盖 */
-.cell-metric {
-  font-size: 12px;
-  color: #98a2b0;
-  white-space: nowrap;
-}
-.cell-metric b {
-  font-size: 15px;
-  font-weight: 700;
-  color: #1f2d3d;
-  font-variant-numeric: tabular-nums;
-  margin-right: 4px;
-}
-.metric-sep {
-  color: #e0e4ea;
-  margin: 0 8px;
-}
-
 .app-actions {
   display: flex;
   align-items: center;
@@ -645,9 +648,112 @@ onMounted(load)
 .create-title { font-size: 17px; font-weight: 700; color: #1f2d3d; }
 .create-sub { font-size: 12.5px; color: #8a97a8; line-height: 1.7; margin-bottom: 14px; max-width: 320px; }
 
-/* 列表视图 */
-.app-table { font-size: 13px; }
-.row-app { display: flex; align-items: center; gap: 10px; }
+/* 列表视图：白卡容器 + 行分隔线（不是表格边框风格） */
+.app-list {
+  background: #fff;
+  border: 1px solid #e5e8ec;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.list-head,
+.list-row {
+  display: grid;
+  /* 首列吃掉剩余宽度：描述折行空间最需要弹性；后三列给固定宽度，多行之间才能对齐 */
+  grid-template-columns: minmax(0, 1fr) 320px 118px 208px;
+  align-items: center;
+  gap: 16px;
+  padding-left: 22px;
+  padding-right: 22px;
+}
+.list-head {
+  height: 46px;
+  font-size: 12.5px;
+  color: #8a97a8;
+  background: #fafbfc;
+  border-bottom: 1px solid #eceff3;
+}
+.list-head .ta-right {
+  text-align: right;
+}
+.list-row {
+  padding-top: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #f2f4f7;
+}
+.list-row:last-child {
+  border-bottom: 0;
+}
+.list-row:hover {
+  background: #fafcfe;
+}
+.list-empty {
+  padding: 24px 0;
+}
+
+.cell-app {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+.cell-app-main {
+  min-width: 0;
+}
+.cell-app-main .app-name {
+  font-size: 15.5px;
+  font-weight: 700;
+  color: #1f2d3d;
+}
+.app-desc {
+  font-size: 12.5px;
+  color: #8a97a8;
+  line-height: 1.65;
+  margin-top: 5px;
+}
+
+.cell-metrics {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.cm {
+  font-size: 12px;
+  color: #98a2b0;
+  white-space: nowrap;
+}
+.cm b {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f2d3d;
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+}
+.cm-sep {
+  color: #c8ced8;
+}
+
+/* 列表里的状态徽标是浅底填充（卡片里是描边），与原型一致 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+.badge.running { color: #0a8f3c; background: #eaf8f0; }
+.badge.ready { color: #0b4f9e; background: #eaf2fb; }
+.badge.offline { color: #8a97a8; background: #f0f2f5; }
+
+.cell-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
 
 /* 页脚通栏 */
 .platform-bar {
