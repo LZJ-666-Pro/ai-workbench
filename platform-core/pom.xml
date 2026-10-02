@@ -28,6 +28,21 @@
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!--
+          数据库迁移：表结构靠版本化迁移演进，而不是「每次启动执行 schema.sql」。
+          schema.sql 全是 CREATE TABLE IF NOT EXISTS，对已存在的表不生效，列变更只能靠
+          启动时查 information_schema 再 ALTER 的补丁类兜底——存量库因此会停在旧结构上，
+          且没有任何地方记录「这个库到底升到哪一版」。
+          flyway-mysql 是 Flyway 10+ 起 MySQL 支持的独立模块，必须一并引入。
+        -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
         <!-- 让 Spring 读取项目根目录的 .env（与 docker-compose 共用一套变量） -->
         <dependency>
             <groupId>me.paulschwarz</groupId>

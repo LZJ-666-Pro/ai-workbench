@@ -131,8 +131,20 @@ cd frontend && npm run typecheck
 
 集成测试**刻意不用 H2**：被测逻辑的价值几乎全在 MySQL 语义里（`UPDATE ... WHERE status='PENDING'`
 的 CAS 幂等、`balance >= ?` 乐观扣款、DECIMAL 精度、聚合口径），换内存库等于换了个被测对象。
-测试直连独立库 `ai_workbench_test`（与开发库隔离，可随时清空），表结构执行的是各模块
-真实的 `schema.sql`，所以 DDL 一改测试立刻感知。
+测试直连独立库 `ai_workbench_test`（与开发库隔离，可随时清空），建表**跑的是各模块真实的
+Flyway 迁移**（先 `clean` 再 `migrate`），所以迁移脚本一旦写错，`mvn test` 立刻失败，
+而不是等到应用启动才炸。
+
+**数据库迁移**：表结构由 Flyway 版本化迁移管理（`各模块/src/main/resources/db/migration/`），
+启动时自动升级，执行记录落在 `flyway_schema_history` 表。迁移一旦提交就不再修改
+（校验和会拒绝启动），后续变更一律新增 `V{n}__*.sql`。版本号跨模块**全局递增**
+（`V1` = platform-core 的 chat_memory，`V2`/`V3` = app-bank），不能各模块从 V1 重新数。
+
+> 引入 Flyway 之前是「每次启动执行 `schema.sql`」：`CREATE TABLE IF NOT EXISTS` 对已存在的表
+> 不生效，列变更只能靠启动时查 `information_schema` 再 `ALTER` 的补丁类兜底，且没有任何地方
+> 记录「这个库升到哪一版」——存量库会悄悄停在旧结构上，出现「测试全绿但真实库缺列」的假象。
+> 存量库的收敛靠 `baselineOnMigrate` + `baselineVersion=0`（让所有迁移都重跑一遍）配合
+> 幂等迁移语句与 `V3` 的存在性判断完成。
 
 **环境变量**：
 
@@ -162,6 +174,7 @@ cd frontend && npm run typecheck
 | 基础 | JDK 21 + Spring Boot 3.5.x |
 | AI 框架 | LangChain4j 1.20.x（OpenAI 兼容接入，默认 GLM glm-4.7-flash，配置化切换） |
 | 存储 | MySQL 8（会话记忆 + 业务数据，容器端口 13306）+ Redis（预留） |
+| 迁移 | Flyway 11（版本化 DDL，`flyway_schema_history` 记录演进，存量库自动 baseline 收敛） |
 | 向量库 | Postgres + pgvector（知识库阶段启用） |
 | 前端 | Vue3 + Vite，fetch + ReadableStream 手解 SSE 帧 |
 | env | `.env` + spring-dotenv + docker compose 变量替换，一处定义两端生效 |
@@ -172,6 +185,7 @@ cd frontend && npm run typecheck
 
 - [x] **Phase 0** 平台底座：LLM 配置化接入、SSE 流式、MySQL 会话记忆、Agent 注册/工具框架、token 用量日志、RAG 配置位、docker-compose
 - [x] **Phase 1** 银行交易 Agent：账户/流水落库 → 转账 + human-in-the-loop 确认卡片、幂等键、审计日志、限额/白名单硬规则
+- [x] **底座硬化**：测试体系（风控/权限单测 + 转账状态机集成测试，77 例）、越权与并发一致性修复（确认单按会话限定、行锁 + READ COMMITTED 串行化、日限额按执行时刻归集）、Flyway 版本化迁移
 - [ ] **Phase 2** 平台化：合并三应用为 `app-platform`、Spring Security 登录、工具级权限（无权限工具对模型不可见）、平台级审计中心、前端控制台布局（侧边导航 + 全局 AI 助手）、「运营助手」Agent + 只读 SQL 分析工具
 - [ ] **Phase 3** 企业文档中心：真实数据源接入、路由 Agent、查询改写、混合检索（向量 + 全文）、引用溯源、评测集与回归脚本
 - [ ] **Phase 4** 固化：统一部署、评测补齐、架构图 + 关键决策记录（ADR）、简历叙事
@@ -186,3 +200,4 @@ cd frontend && npm run typecheck
 - 确定性约束（限额、权限、幂等）在代码层硬执行，不交给 LLM 自觉
 - 「读宽写窄」：AI 的只读能力可以放宽，写能力必须走业务规则 + 人工确认
 - **数据库是唯一事实来源**：模型看不见确认单的真实状态（过期/取消），必须通过 `queryTransferOrder()` 工具查库，不能凭对话记忆
+- **结构演进靠迁移不靠补丁**：表结构变更写 Flyway 迁移并提交，禁止再用「启动时查 `information_schema` 补列」的做法——那种补丁没有版本记录，各环境会悄悄分叉

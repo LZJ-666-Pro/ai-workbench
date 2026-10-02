@@ -10,10 +10,6 @@ spring:
     # 本地默认与 .env 保持一致，防止 dotenv 未加载时占位符解析失败；生产用环境变量覆盖
     password: ${MYSQL_PASSWORD:204512}
     driver-class-name: com.mysql.cj.jdbc.Driver
-  sql:
-    init:
-      mode: always
-      schema-locations: classpath*:schema.sql
 
 ai:
   llm:

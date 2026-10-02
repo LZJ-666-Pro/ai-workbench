@@ -1,16 +1,13 @@
 package com.ai.workbench.bank.support;
 
 import java.math.BigDecimal;
-import java.sql.Connection;
 import java.util.List;
 
 import javax.sql.DataSource;
 
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.flywaydb.core.Flyway;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.springframework.jdbc.datasource.init.ScriptUtils;
 
 /**
  * 集成测试数据库脚手架：直连真实 MySQL，不启动 Spring 容器、不依赖 Docker 客户端。
@@ -25,7 +22,8 @@ import org.springframework.jdbc.datasource.init.ScriptUtils;
  *  - MySQL 不可用时 {@link #available()} 返回 false，集成测试整体跳过而不是失败——
  *    保证「没有数据库的机器上 mvn test 依然绿」。
  *
- * 建表脚本直接执行各模块真实的 schema.sql，因此表结构一旦演进，测试会立刻感知。
+ * 建表直接跑各模块真实的 Flyway 迁移（classpath:db/migration），因此迁移一旦写错，
+ * 测试会立刻失败——而不是等到应用启动才炸。
  */
 public final class BankTestDb {
 
@@ -92,31 +90,32 @@ public final class BankTestDb {
         return jdbc;
     }
 
-    /** 执行 classpath 下所有 schema.sql（app-bank 与 platform-core 各一份，按真实 DDL 建表） */
-    private static void initSchema() throws Exception {
+    /**
+     * 用真实的 Flyway 迁移重建测试库结构。
+     *
+     * 为什么是 clean + migrate 而不是直接 migrate：
+     *  - 测试要求每个 JVM 都从同一初始结构出发，单纯 migrate 会继承上一次运行留下的结构；
+     *  - clean 会连 flyway_schema_history 一起清掉，下一次 migrate 才会把 V1~Vn 完整跑一遍，
+     *    这样「迁移脚本本身跑不通」在测试里立刻暴露。
+     *
+     * clean 会 DROP 掉库里的所有对象，因此执行前必须先确认目标库以 _test 结尾，
+     * 防止有人把 TEST_MYSQL_URL 指到开发库/生产库上时被清空。
+     */
+    private static void initSchema() {
         JdbcTemplate template = jdbc();
         template.queryForObject("SELECT 1", Integer.class);
-        Resource[] scripts = new PathMatchingResourcePatternResolver().getResources("classpath*:schema.sql");
-        if (scripts.length == 0) {
-            throw new IllegalStateException("classpath 下未找到 schema.sql，无法建表");
-        }
-        // 先删后建：schema.sql 全是 CREATE TABLE IF NOT EXISTS，对已存在的旧表不生效，
-        // 表结构一旦演进，测试库会停在旧结构上，出现「测试全绿但生产缺列」的假象。
-        // 只允许对以 _test 结尾的库执行，避免有人把 TEST_MYSQL_URL 指到真实库上时被清空。
         String database = template.queryForObject("SELECT DATABASE()", String.class);
         if (database == null || !database.endsWith("_test")) {
             throw new IllegalStateException(
                     "拒绝在非测试库上重建表结构：DATABASE()=" + database + "（库名需以 _test 结尾）");
         }
-        for (String table : List.of("bank_transaction", "bank_transfer_order", "bank_audit_log",
-                "bank_account", "platform_user", "chat_memory")) {
-            template.execute("DROP TABLE IF EXISTS " + table);
-        }
-        for (Resource script : scripts) {
-            try (Connection connection = template.getDataSource().getConnection()) {
-                ScriptUtils.executeSqlScript(connection, script);
-            }
-        }
+        Flyway flyway = Flyway.configure()
+                .dataSource(dataSource())
+                .locations("classpath:db/migration")
+                .cleanDisabled(false)   // Flyway 10+ 默认禁止 clean，测试需要它
+                .load();
+        flyway.clean();
+        flyway.migrate();
     }
 
     /**
