@@ -2,6 +2,7 @@ package com.ai.workbench.bank.auth;
 
 import java.util.Map;
 
+import com.ai.workbench.core.console.PlatformEventLogger;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -38,11 +39,14 @@ public class AuthController {
     private final JdbcTemplate jdbc;
     private final PasswordEncoder encoder;
     private final JwtService jwtService;
+    private final PlatformEventLogger eventLogger;
 
-    public AuthController(JdbcTemplate jdbc, PasswordEncoder encoder, JwtService jwtService) {
+    public AuthController(JdbcTemplate jdbc, PasswordEncoder encoder, JwtService jwtService,
+                          PlatformEventLogger eventLogger) {
         this.jdbc = jdbc;
         this.encoder = encoder;
         this.jwtService = jwtService;
+        this.eventLogger = eventLogger;
     }
 
     @PostMapping("/login")
@@ -58,16 +62,28 @@ public class AuthController {
                         rs.getString("identity_id"), rs.getInt("status") == 1),
                 req.username());
         if (rows.isEmpty() || !encoder.matches(req.password(), rows.getFirst().passwordHash())) {
+            // 登录失败同样留痕：审计要能回答「谁在什么时候试过」，而不只是成功记录
+            loginEvent(req.username(), "登录失败：用户名或密码错误", PlatformEventLogger.FAIL);
             return ResponseEntity.status(401).body(Map.of("message", "用户名或密码错误"));
         }
         UserRow u = rows.getFirst();
         // 停用账号即便密码正确也拒绝登录（401 提示凭据错误、403 提示停用，前端可区分展示）
         if (!u.enabled()) {
+            loginEvent(u.username(), "登录被拒：账号已停用", PlatformEventLogger.DENY);
             return ResponseEntity.status(403).body(Map.of("message", "账号已被停用，请联系管理员开通"));
         }
         String token = jwtService.issue(u.username(), u.displayName(), u.platformRole(), u.identityId());
+        loginEvent(u.username(), "登录成功（%s）".formatted(u.platformRole()), PlatformEventLogger.SUCCESS);
         return ResponseEntity.ok(new LoginResponse(token,
                 new UserView(u.username(), u.displayName(), u.platformRole(), u.identityId())));
+    }
+
+    /** 登录事件：actor 记用户名（此时还没有 token，只能从请求体拿） */
+    private void loginEvent(String username, String detail, String result) {
+        eventLogger.record(PlatformEventLogger.PlatformEvent
+                .of(PlatformEventLogger.APP_PLATFORM, PlatformEventLogger.CATEGORY_AUTH, "auth.login",
+                        detail, result)
+                .by(username));
     }
 
     @GetMapping("/me")

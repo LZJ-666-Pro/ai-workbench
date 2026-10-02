@@ -7,9 +7,9 @@ import { auth, logout, roleLabel } from './api/auth'
 
 const route = useRoute()
 const router = useRouter()
-/** 聊天工作区/后台/登录页是全屏布局，不走 .main 的限宽布局 */
+/** 聊天工作区/后台/登录页/日志页是全屏布局，不走 .main 的限宽布局 */
 const isChatRoute = computed(() =>
-  ['/bank', '/knowledge', '/interview', '/admin', '/login'].some(p => route.path.startsWith(p)),
+  ['/bank', '/knowledge', '/interview', '/admin', '/login', '/logs'].some(p => route.path.startsWith(p)),
 )
 
 const isAdminRoute = computed(() => route.path.startsWith('/admin'))
@@ -32,6 +32,9 @@ const navLinks = computed(() => {
   if (isAdminRoute.value) return []
   if (route.path.startsWith('/bank')) {
     return allLinks.filter(l => l.to === '/bank' || l.to === '/admin')
+  }
+  if (route.path === '/logs') {
+    return platformLinks
   }
   if (isWideRoute.value) {
     return platformLinks

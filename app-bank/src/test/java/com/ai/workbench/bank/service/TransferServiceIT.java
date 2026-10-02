@@ -88,7 +88,8 @@ class TransferServiceIT {
 
         @Bean
         ToolAuditLogger toolAuditLogger(JdbcTemplate jdbcTemplate, MeterRegistry meterRegistry) {
-            return new ToolAuditLogger(jdbcTemplate, meterRegistry);
+            return new ToolAuditLogger(jdbcTemplate, meterRegistry,
+                    new com.ai.workbench.core.console.PlatformEventLogger(jdbcTemplate));
         }
 
         @Bean

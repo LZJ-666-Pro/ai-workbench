@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit;
 
 import com.ai.workbench.core.agent.AgentRegistry;
 import com.ai.workbench.core.agent.Assistant;
+import com.ai.workbench.core.console.PlatformEventLogger;
 import com.ai.workbench.core.guard.ChatGuardException;
 import com.ai.workbench.core.guard.LlmGuard;
 import com.ai.workbench.core.observability.TraceContext;
@@ -51,15 +52,18 @@ public class ChatStreamController {
     private final ObjectProvider<AgentStreamListener> streamListeners;
     private final MeterRegistry meterRegistry;
     private final LlmGuard llmGuard;
+    private final PlatformEventLogger eventLogger;
 
     public ChatStreamController(AgentRegistry registry,
                                 ObjectProvider<AgentStreamListener> streamListeners,
                                 MeterRegistry meterRegistry,
-                                LlmGuard llmGuard) {
+                                LlmGuard llmGuard,
+                                PlatformEventLogger eventLogger) {
         this.registry = registry;
         this.streamListeners = streamListeners;
         this.meterRegistry = meterRegistry;
         this.llmGuard = llmGuard;
+        this.eventLogger = eventLogger;
     }
 
     @GetMapping(value = "/{agent}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -77,6 +81,11 @@ public class ChatStreamController {
         if (!decision.allowed()) {
             meterRegistry.counter("chat.guard.reject", "agent", agent, "reason", decision.reason()).increment();
             log.warn("对话被护栏拒绝: agent={}, memoryId={}, reason={}", agent, memoryId, decision.reason());
+            eventLogger.record(PlatformEventLogger.PlatformEvent
+                    .of(agent, PlatformEventLogger.CATEGORY_GUARD, "guard.reject",
+                            "对话被拒绝：" + decision.message(), PlatformEventLogger.DENY)
+                    .session(memoryId)
+                    .tracedBy(traceId));
             throw new ChatGuardException(decision.reason(), decision.message());
         }
 
@@ -125,6 +134,16 @@ public class ChatStreamController {
                     llmGuard.recordUsage(memoryId, agent, usage, traceId);
                     meterRegistry.counter("chat.stream", "agent", agent, "result", "done").increment();
                     recordDuration(agent, startNanos);
+                    eventLogger.record(PlatformEventLogger.PlatformEvent
+                            .of(agent, PlatformEventLogger.CATEGORY_CHAT, "agent.chat",
+                                    "对话完成，回复约 %d token".formatted(
+                                            usage != null && usage.totalTokenCount() != null
+                                                    ? usage.totalTokenCount() : 0),
+                                    PlatformEventLogger.SUCCESS)
+                            .session(memoryId)
+                            .timing(elapsedMs(startNanos),
+                                    usage != null ? usage.totalTokenCount() : null)
+                            .tracedBy(traceId));
                     emitter.complete();
                 }))
                 .onError(error -> TraceContext.runWith(traceId, () -> {
@@ -148,6 +167,12 @@ public class ChatStreamController {
                     payload.put("content", friendlyMessage);
                     payload.put("traceId", traceId == null ? "-" : traceId);
                     SseSender.send(emitter, payload);
+                    eventLogger.record(PlatformEventLogger.PlatformEvent
+                            .of(agent, PlatformEventLogger.CATEGORY_CHAT, "agent.chat",
+                                    "对话失败：" + friendlyMessage, PlatformEventLogger.FAIL)
+                            .session(memoryId)
+                            .timing(elapsedMs(startNanos), null)
+                            .tracedBy(traceId));
                     emitter.complete();
                 }))
                 .start();
@@ -163,6 +188,11 @@ public class ChatStreamController {
     private void recordDuration(String agent, long startNanos) {
         meterRegistry.timer("chat.stream.duration", "agent", agent)
                 .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
+    }
+
+    /** 端到端耗时（毫秒），落进运行日志供首页算 P95 */
+    private static int elapsedMs(long startNanos) {
+        return (int) TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
     }
 
     /**

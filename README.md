@@ -128,7 +128,7 @@ cd frontend && npm run verify
 |---|---|---|---|
 | 后端单元测试 `*Test` | `platform-core`、`app-bank` 的 `src/test/...` | 无 | 护栏决策与滑动窗口限流、风控规则、身份解析、工具权限边界、工具上下文 |
 | 后端集成测试 `*IT` | `app-bank/src/test/...` | 真实 MySQL | 转账两段式状态机：建单/确认/幂等/过期/并发/取消/审计 |
-| 前端单元测试 `*.spec.ts` | `frontend/src/**/__tests__/` | jsdom | SSE 帧解析与分片拼装、身份与 memoryId 绑定、登录态、护栏 429 提示、图表生命周期 |
+| 前端单元测试 `*.spec.ts` | `frontend/src/**/__tests__/` | jsdom | SSE 帧解析与分片拼装、身份与 memoryId 绑定、登录态、护栏 429 提示、日志查询参数拼装、图表生命周期 |
 
 前端测试里的假 Response 是**手写**的（只实现被测代码用到的 `ok`/`status`/`body.getReader`/`json`），
 不依赖 jsdom 是否提供 `ReadableStream`/`Response`——测试不该因为环境差异而假失败。
@@ -171,7 +171,52 @@ Flyway 迁移**（先 `clean` 再 `migrate`），所以迁移脚本一旦写错�
 - `GET /api/chat/{agent}/stream?memoryId=会话ID&message=输入` — SSE 流式对话
   （事件：`delta` 增量 / `done` 含 token 用量 / `error` 含 traceId）
 - `GET /api/chat/agents` — 已注册的 Agent 列表
+- `GET /api/platform/workbench` — 首页工作台数据（任何登录用户；全是聚合数字）
+- `GET /api/admin/platform-logs?app&category&result&keyword&page&size` — 平台运行日志（ADMIN）
 - `GET /{agent}` 对应应用静态页（目前 app-bank 有聊天 demo 页）
+
+---
+
+## 工作台与平台运行日志
+
+首页的每一格数字都对应一句真实 SQL，没有前端写死的常量。数据来源：
+
+| 位置 | 来源 |
+|---|---|
+| 能力胶囊：模型数 / SSE P95 / 会话记忆 / 工具数 | `llm_usage`、`platform_event_log`、`chat_memory` |
+| 银行助手卡片：今日会话 / 工具调用 / 成功率 | `platform_event_log`（app=bank） |
+| 知识库卡片：文档数 / 检索 P95 | `knowledge_document`、`knowledge_query_log.latency_ms` |
+| 面试卡片：累计场次 / 平均分 | `interview_session`（未结束的场次不计入平均分） |
+| 页脚：今日事件 / 平均延迟 / 成功率 | `platform_event_log` |
+| 页脚：已注册接口数 | Spring 已注册的 `RequestMappingHandlerMapping`（不是写死的数字——写死的数字加一个接口就过期） |
+| 通知中心 | 待审批转账、今日风控拒绝、今日护栏拦截（**仅 ADMIN**） |
+
+**平台运行日志**（`platform_event_log`，V6 迁移）与 `bank_audit_log` 是两回事，消费者不同：
+
+- `bank_audit_log`：银行业务域的合规审计，字段与语义为银行定制，只记业务工具调用，
+  给管理后台审计页与合规追溯；
+- `platform_event_log`：平台运行日志，形状跨应用统一，除工具调用外还记对话、登录、
+  护栏拒绝、知识库检索、面试轮次，给工作台首页与「查看日志」。
+
+`ToolAuditLogger` 是工具调用的唯一收口，因此在这里各写一份。
+
+`/logs` 页面按应用/类别/结果/关键字筛选，分页，汇总条**不随分页变化**（否则翻页时数字跳动，
+读起来像 bug）。筛选条件同步到 URL，日志地址可以直接贴给别人还原现场。每行带 TraceId，
+复制它即可在日志里拉出这次请求贯穿的全部行。
+
+**关于演示数据**：`platform_event_log`、`knowledge_document`、`knowledge_query_log`、
+`interview_session`、`llm_usage` 由 `PlatformDemoDataSeeder` 在表为空时播种一批**仿真业务数据**
+（48 篇银行制度/产品/监管语料、110 条检索日志、14 场面试、约 350 条运行事件）。
+`bank_account` / `bank_transaction` / `bank_audit_log` 三张业务与合规表**不造数**，只记真实操作。
+
+> 为什么用 `ApplicationRunner` 而不是 Flyway 迁移：这些数据的价值全在时间分布上——首页要算
+> 「今日会话」「近 7 天 P95」。迁移里写死绝对时间的话，跑起来第二天就全变成历史数据、页面立刻空掉；
+> 播种按相对当前时间生成，每次全新部署都能看到一个「正在运行」的平台。表为空才播种，
+> 所以重启不会让数字虚增。
+
+**应用在线状态**：工作台接口跑在 app-bank 里，它的 `AgentRegistry` 只登记了银行助手，
+另两个应用是独立进程。因此首页拿到数据后会用各应用自己的 `/api/chat/agents` **实际探测**一次——
+只靠本进程注册表得出的状态必然把另外两个应用误报成「未注册」。
 
 ---
 
@@ -279,7 +324,8 @@ readiness 永远失败、服务被判定不可用）；`/actuator/**` 其余端�
 
 - [x] **Phase 0** 平台底座：LLM 配置化接入、SSE 流式、MySQL 会话记忆、Agent 注册/工具框架、token 用量日志、RAG 配置位、docker-compose
 - [x] **Phase 1** 银行交易 Agent：账户/流水落库 → 转账 + human-in-the-loop 确认卡片、幂等键、审计日志、限额/白名单硬规则
-- [x] **底座硬化**：测试体系（后端 94 例 + 前端 20 例）、越权与并发一致性修复（确认单按会话限定、行锁 + READ COMMITTED 串行化、日限额按执行时刻归集）、Flyway 版本化迁移、可观测性（健康检查 + 指标 + traceId 贯穿）、LLM 成本与限流护栏、CI 流水线
+- [x] **底座硬化**：测试体系（后端 104 例 + 前端 24 例）、越权与并发一致性修复（确认单按会话限定、行锁 + READ COMMITTED 串行化、日限额按执行时刻归集）、Flyway 版本化迁移、可观测性（健康检查 + 指标 + traceId 贯穿）、LLM 成本与限流护栏、CI 流水线
+- [x] **工作台真实化**：首页数据全部改由数据库查询产出（新增平台运行日志表与知识库/面试领域表）、「查看日志」做成按应用筛选的真实日志页（分页/筛选/URL 可还原/traceId 回溯）、演示数据播种
 - [ ] **Phase 2** 平台化：合并三应用为 `app-platform`、Spring Security 登录、工具级权限（无权限工具对模型不可见）、平台级审计中心、前端控制台布局（侧边导航 + 全局 AI 助手）、「运营助手」Agent + 只读 SQL 分析工具
 - [ ] **Phase 3** 企业文档中心：真实数据源接入、路由 Agent、查询改写、混合检索（向量 + 全文）、引用溯源、评测集与回归脚本
 - [ ] **Phase 4** 固化：统一部署、评测补齐、架构图 + 关键决策记录（ADR）、简历叙事

@@ -10,6 +10,8 @@ const router = createRouter({
     { path: '/knowledge', name: 'knowledge', component: () => import('../views/KnowledgeView.vue') },
     { path: '/interview', name: 'interview', component: () => import('../views/InterviewView.vue') },
     { path: '/developers', name: 'developers', component: () => import('../views/DevelopersView.vue') },
+    // 平台运行日志：含会话 id、traceId 与业务明细，属运维视图，仅 ADMIN（与后端 /api/admin 前缀一致）
+    { path: '/logs', name: 'logs', component: () => import('../views/LogsView.vue') },
     {
       path: '/admin',
       component: () => import('../views/admin/AdminLayout.vue'),
@@ -53,10 +55,15 @@ router.beforeEach(async (to) => {
       return { path: '/login', query: { redirect: to.fullPath } }
     }
   }
-  if (to.path.startsWith('/admin') && auth.user?.platformRole !== 'ADMIN') {
+  if (isAdminOnly(to.path) && auth.user?.platformRole !== 'ADMIN') {
     return '/'
   }
   return true
 })
+
+/** 仅管理员可进的页面：管理后台与平台运行日志 */
+function isAdminOnly(path: string): boolean {
+  return path.startsWith('/admin') || path === '/logs'
+}
 
 export default router

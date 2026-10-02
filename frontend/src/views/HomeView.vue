@@ -15,21 +15,38 @@
           智汇银行（总行） · {{ roleLabel(auth.user?.platformRole) }} · <span class="env-tag">生产环境</span>
         </p>
         <div class="cap-row">
-          <span class="cap"><el-icon><Lightning /></el-icon>LLM 接入<b>4 个模型</b></span>
-          <span class="cap"><el-icon><Connection /></el-icon>SSE 流式<b>320ms</b></span>
-          <span class="cap"><el-icon><Cpu /></el-icon>会话记忆<b>32k</b></span>
-          <span class="cap"><el-icon><SetUp /></el-icon>工具框架<b>12 个</b></span>
+          <span class="cap"><el-icon><Lightning /></el-icon>LLM 接入<b>{{ hero.models }} 个模型</b></span>
+          <span class="cap"><el-icon><Connection /></el-icon>SSE 流式<b>{{ hero.sseP95Ms == null ? '—' : hero.sseP95Ms + 'ms' }}</b></span>
+          <span class="cap"><el-icon><Cpu /></el-icon>会话记忆<b>{{ hero.memorySegments.toLocaleString() }} 段</b></span>
+          <span class="cap"><el-icon><SetUp /></el-icon>工具能力<b>{{ hero.tools }} 项</b></span>
         </div>
       </div>
       <div class="hero-mark" aria-hidden="true">智</div>
     </div>
 
     <!-- 应用入口卡片区：2 × 2 大卡片撑满视口 -->
-    <div class="section-title">应用中心</div>
+    <div class="section-title">
+      应用中心
+      <span v-if="loading" class="loading-hint">加载中…</span>
+    </div>
+
+    <el-alert
+      v-if="error"
+      class="load-error"
+      type="error"
+      :title="`工作台数据加载失败：${error}`"
+      :closable="false"
+      show-icon
+    >
+      <template #default>
+        <el-button link type="primary" @click="load">重试</el-button>
+      </template>
+    </el-alert>
+
     <div class="app-grid">
       <div v-for="app in apps" :key="app.key" class="app-card">
         <div class="app-head">
-          <span class="app-tile" :class="app.tone"><el-icon class="app-icon"><component :is="app.icon" /></el-icon></span>
+          <span class="app-tile" :class="app.tone"><el-icon class="app-icon"><component :is="iconOf(app.key)" /></el-icon></span>
           <span class="app-name">{{ app.name }}</span>
           <span class="status" :class="app.status"><i class="dot" />{{ app.statusText }}</span>
         </div>
@@ -41,8 +58,9 @@
           </div>
         </div>
         <div class="app-actions">
-          <el-button type="primary" size="default" class="open-btn" @click="router.push(app.to!)">打开工作台</el-button>
-          <el-button link type="primary" @click="router.push('/admin/audit')">查看日志</el-button>
+          <el-button type="primary" size="default" class="open-btn" @click="router.push(app.to)">打开工作台</el-button>
+          <!-- 日志含会话 id / traceId / 业务明细，属运维视图，只对管理员开放 -->
+          <el-button v-if="workbench?.admin" link type="primary" @click="openLogs(app.key)">查看日志</el-button>
         </div>
       </div>
 
@@ -58,21 +76,22 @@
       </div>
     </div>
 
-    <!-- 平台状态栏：浅色弱化，主视觉留给应用卡片 -->
+    <!-- 平台状态栏：数字全部来自运行日志表与 Spring 已注册的路由 -->
     <div class="platform-bar">
       <div class="pb-metrics">
-        <span class="pb-item">API 调用（今日）<b>1,240</b> 次</span>
+        <span class="pb-item">平台事件（今日）<b>{{ platform.eventsToday.toLocaleString() }}</b> 次</span>
         <span class="sep">·</span>
-        <span class="pb-item">平均延迟 <b>320ms</b></span>
+        <span class="pb-item">平均延迟 <b>{{ platform.avgLatencyMs == null ? '—' : platform.avgLatencyMs + 'ms' }}</b></span>
         <span class="sep">·</span>
-        <span class="pb-item">成功率 <b>99.2%</b></span>
+        <span class="pb-item">成功率 <b>{{ platform.successRate }}%</b></span>
         <span class="sep">·</span>
-        <span class="pb-item">管理端接口 <b>17</b> 个</span>
+        <span class="pb-item">已注册接口 <b>{{ platform.endpoints }}</b> 个</span>
       </div>
       <div class="pb-links">
-        <span class="pb-updated">数据更新于 {{ updatedAt }}</span>
+        <span class="pb-updated">数据更新于 {{ platform.updatedAt }}</span>
         <el-button size="small" class="outline-btn" @click="router.push('/developers')">开发者文档</el-button>
-        <el-button size="small" class="outline-btn" @click="router.push('/admin/dashboard')">平台监控</el-button>
+        <el-button v-if="workbench?.admin" size="small" class="outline-btn" @click="router.push('/logs')">查看日志</el-button>
+        <el-button v-if="workbench?.admin" size="small" class="outline-btn" @click="router.push('/admin/dashboard')">平台监控</el-button>
       </div>
     </div>
 
@@ -104,9 +123,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { auth, roleLabel } from '../api/auth'
+import { loadWorkbench, probeAppRunning, type AppCard, type Workbench } from '../api/platform'
 import {
   Lightning, Connection, Cpu, SetUp, OfficeBuilding, Collection,
   Microphone, Plus,
@@ -115,11 +135,54 @@ import {
 const router = useRouter()
 const specVisible = ref(false)
 
-/** 平台状态栏的数据更新时间（页面加载时刻） */
-const updatedAt = new Intl.DateTimeFormat('zh-CN', {
-  year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', hour12: false,
-}).format(new Date())
+const workbench = ref<Workbench | null>(null)
+const loading = ref(false)
+const error = ref('')
+
+/** 空态而不是写死的默认值：宁可显示 0 / —，也不显示一个编出来的漂亮数字 */
+const EMPTY_PLATFORM = { eventsToday: 0, avgLatencyMs: null, successRate: 0, endpoints: 0, updatedAt: '—' }
+
+const apps = computed<AppCard[]>(() => workbench.value?.apps ?? [])
+const platform = computed(() => workbench.value?.platform ?? EMPTY_PLATFORM)
+const hero = computed(() => workbench.value?.hero ?? {
+  models: 0, sseP95Ms: null, memorySegments: 0, tools: 0,
+})
+
+async function load() {
+  loading.value = true
+  error.value = ''
+  try {
+    workbench.value = await loadWorkbench()
+    // 后端只能看到自己进程里注册的 Agent，另两个应用是独立进程，必须实际探测
+    void probeStatuses()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '未知错误'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function probeStatuses() {
+  const list = workbench.value?.apps
+  if (!list) return
+  await Promise.all(list.map(async app => {
+    const running = await probeAppRunning(app.to, app.key)
+    app.status = running ? 'running' : 'offline'
+    app.statusText = running ? '运行中' : '未启动'
+  }))
+}
+
+function openLogs(appKey: string) {
+  router.push({ path: '/logs', query: { app: appKey } })
+}
+
+/** 卡片图标按 key 映射（图标是展示细节，不必走接口） */
+const ICONS: Record<string, object> = {
+  bank: OfficeBuilding,
+  knowledge: Collection,
+  interview: Microphone,
+}
+const iconOf = (key: string) => ICONS[key] ?? OfficeBuilding
 
 const greeting = computed(() => {
   const h = new Date().getHours()
@@ -129,52 +192,7 @@ const greeting = computed(() => {
   return '晚上好'
 })
 
-interface AppCard {
-  key: string
-  icon: object
-  name: string
-  type: string
-  /** 图标瓷砖色系：每个应用一个品牌色 */
-  tone: 'blue' | 'violet' | 'green'
-  status: 'running' | 'building' | 'ready'
-  statusText: string
-  metrics: { label: string; value: string }[]
-  to: string
-}
-
-const apps: AppCard[] = [
-  {
-    key: 'bank', icon: OfficeBuilding, name: '银行助手「小银」', tone: 'blue',
-    type: '交易型 Agent · 工具调用 + 流式对话，支持转账确认卡片、幂等与全程审计',
-    status: 'running', statusText: '运行中',
-    metrics: [
-      { label: '今日会话', value: '12' },
-      { label: '工具调用', value: '48' },
-      { label: '成功率', value: '98%' },
-    ],
-    to: '/bank',
-  },
-  {
-    key: 'knowledge', icon: Collection, name: '个人知识库', tone: 'violet',
-    type: '检索型 Agent · 多源路由 + RAG + 引用溯源，Phase 2 接入真实数据源',
-    status: 'building', statusText: '建设中',
-    metrics: [
-      { label: '文档', value: '48 篇' },
-      { label: '检索 P95', value: '210ms' },
-    ],
-    to: '/knowledge',
-  },
-  {
-    key: 'interview', icon: Microphone, name: '面试模拟器', tone: 'green',
-    type: '流程型 Agent · 结构化评分与评估报告，Phase 3 加入简历 RAG',
-    status: 'ready', statusText: '可对话',
-    metrics: [
-      { label: '累计面试', value: '3 场' },
-      { label: '平均分', value: '82' },
-    ],
-    to: '/interview',
-  },
-]
+onMounted(load)
 </script>
 
 <style scoped>
@@ -295,6 +313,15 @@ const apps: AppCard[] = [
   background: #0b4f9e;
   border-radius: 2px;
 }
+.loading-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: #98a2b0;
+  margin-left: 6px;
+}
+.load-error {
+  margin-bottom: 14px;
+}
 .app-grid {
   flex: 1;
   display: grid;
@@ -363,6 +390,8 @@ const apps: AppCard[] = [
 .status.building .dot { background: #e6a23c; }
 .status.ready { color: #0b4f9e; }
 .status.ready .dot { background: #0b4f9e; }
+.status.offline { color: #98a2b0; }
+.status.offline .dot { background: #c0c4cc; }
 
 .app-type {
   font-size: 13px;
