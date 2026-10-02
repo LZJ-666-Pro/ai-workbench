@@ -209,16 +209,10 @@ public class BankAdminQueryService {
         String w = where.toString();
         long total = jdbc.queryForObject("SELECT COUNT(*) FROM bank_audit_log" + w, Long.class, args.toArray());
         List<AuditLogView> list = jdbc.query("""
-                SELECT id, memory_id, tool_name, detail, result, created_at
+                SELECT id, memory_id, tool_name, detail, result, trace_id, created_at
                 FROM bank_audit_log
                 """ + w + " ORDER BY id DESC LIMIT ? OFFSET ?",
-                (rs, i) -> new AuditLogView(
-                        rs.getLong("id"),
-                        rs.getString("memory_id"),
-                        rs.getString("tool_name"),
-                        rs.getString("detail"),
-                        rs.getString("result"),
-                        formatTime(rs.getTimestamp("created_at"))),
+                auditMapper(),
                 appendPaging(args, page, size).toArray());
         return new PageResult<>(list, total, page, size);
     }
@@ -365,7 +359,7 @@ public class BankAdminQueryService {
                 memoryIds.stream().map(m -> "?").toList());
         Object[] args = concat(new Object[]{owner}, accArgs, memoryIds.toArray());
         return jdbc.query(
-                "SELECT id, memory_id, tool_name, detail, result, created_at FROM bank_audit_log "
+                "SELECT id, memory_id, tool_name, detail, result, trace_id, created_at FROM bank_audit_log "
                         + "WHERE detail LIKE ? OR memory_id IN (" + memList + ") "
                         + "ORDER BY id DESC LIMIT 10",
                 auditMapper(), args);
@@ -493,6 +487,7 @@ public class BankAdminQueryService {
                 rs.getString("tool_name"),
                 rs.getString("detail"),
                 rs.getString("result"),
+                rs.getString("trace_id"),
                 formatTime(rs.getTimestamp("created_at")));
     }
 

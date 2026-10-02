@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  平台统一日志格式（三个应用共用）。
+
+  放在 platform-core 而不是各应用的 application.yml：日志格式属于底座约定，
+  三个应用写三份迟早漂移。Spring Boot 会按 classpath 查找 logback-spring.xml，
+  而各应用自身没有该文件，所以这里就是唯一生效的那份；
+  若将来某个应用要自定义，放自己的 logback-spring.xml 即可覆盖（这是预期行为）。
+
+  改动只在 Spring Boot 默认格式的基础上插入 [%X{traceId:-}]：
+  位置紧跟日志级别，grep 一个 traceId 就能把一次请求贯穿的所有日志拉出来
+  （含跑在 LLM 客户端线程上的 SSE 回调与工具调用日志）。
+  "-" 是缺省占位：启动期、定时任务等没有请求上下文，不留空洞。
+-->
+<configuration>
+    <!-- Spring Boot 的默认定义：%clr 着色、%wEx 异常栈等 conversionRule 都在这里面 -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <charset>${CONSOLE_LOG_CHARSET:-UTF-8}</charset>
+            <pattern>%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(%5p) %clr([%X{traceId:-}]){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n%wEx</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

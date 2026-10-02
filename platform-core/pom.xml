@@ -43,6 +43,20 @@
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-mysql</artifactId>
         </dependency>
+
+        <!--
+          可观测性：Actuator 暴露健康检查与指标端点，Micrometer 负责采集。
+          micrometer-registry-prometheus 让指标能以 Prometheus 格式被抓取——
+          只有 /actuator/metrics（需要按名字逐个查）等于没有监控，接入抓取端才有意义。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
         <!-- 让 Spring 读取项目根目录的 .env（与 docker-compose 共用一套变量） -->
         <dependency>
             <groupId>me.paulschwarz</groupId>

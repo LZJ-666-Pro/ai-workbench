@@ -62,13 +62,14 @@ public final class AdminDtos {
             String createdAt) {
     }
 
-    /** 审计日志行 */
+    /** 审计日志行（traceId 对应日志里的 [traceId]，用于从审计行下钻到这一次请求的全部日志） */
     public record AuditLogView(
             long id,
             String memoryId,
             String toolName,
             String detail,
             String result,
+            String traceId,
             String createdAt) {
     }
 

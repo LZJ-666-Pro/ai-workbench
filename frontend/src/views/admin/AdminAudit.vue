@@ -40,6 +40,7 @@ const shortId = (memoryId: string) => memoryId.split(':').pop()?.substring(0, 8)
   <div class="page-card">
     <div class="hint">
       记录 AI 助手每次工具调用的审计轨迹：谁（会话）、何时、调了什么工具、参数与结果（成功 / 放行 / 风控拒绝 / 失败）。
+      最右列的 TraceId 对应后端日志里的 <span class="mono">[traceId]</span>，拿着它即可捞出这一次请求贯穿的全部日志。
     </div>
     <div class="toolbar">
       <span class="toolbar-label">调用结果：</span>
@@ -71,7 +72,16 @@ const shortId = (memoryId: string) => memoryId.split(':').pop()?.substring(0, 8)
       <el-table-column prop="toolName" label="工具" width="120">
         <template #default="{ row }"><span class="mono">{{ row.toolName }}</span></template>
       </el-table-column>
-      <el-table-column prop="detail" label="调用明细" min-width="260" show-overflow-tooltip />
+      <el-table-column prop="detail" label="调用明细" min-width="240" show-overflow-tooltip />
+      <el-table-column label="TraceId" width="150">
+        <template #default="{ row }">
+          <!-- 与后端日志里的 [traceId] 一致：复制它即可在日志中捞出这一次请求的全部行 -->
+          <el-tooltip v-if="row.traceId" :content="row.traceId" placement="top">
+            <span class="mono dim">{{ row.traceId.substring(0, 12) }}</span>
+          </el-tooltip>
+          <span v-else class="dim">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="结果" width="100" align="center">
         <template #default="{ row }">
           <el-tag :type="(resultTag[row.result] || 'info') as any" size="small">{{ row.result }}</el-tag>

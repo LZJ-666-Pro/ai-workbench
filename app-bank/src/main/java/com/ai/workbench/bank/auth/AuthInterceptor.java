@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.ai.workbench.bank.auth.JwtService.AuthPrincipal;
 import com.ai.workbench.bank.identity.BankIdentity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.JwtException;
@@ -21,6 +22,11 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * /api/admin/** 额外要求 ADMIN 角色；请求携带 memoryId 时校验其身份段与
  * 登录身份一致，防止 A 身份读写 B 身份的会话/转账确认单。
  * 每次请求回库核对账号状态：停用即时生效（不等 token 过期）。
+ *
+ * 注意适用范围：HandlerInterceptor 只能拦住走 RequestMappingHandlerMapping 的请求。
+ * Actuator 端点由独立的 WebMvcEndpointHandlerMapping 处理，不经过这里——
+ * 因此指标端点的鉴权由 {@link ActuatorAuthFilter} 承担，两者共用
+ * {@link #authenticate} 这一份登录态校验，避免两处实现各写一套。
  */
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
@@ -48,34 +54,10 @@ public class AuthInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
-        String header = request.getHeader("Authorization");
-        if (header == null || !header.startsWith("Bearer ")) {
-            return reject(response, 401, "未登录或登录已过期");
-        }
-        JwtService.AuthPrincipal principal;
-        try {
-            principal = jwtService.parse(header.substring(7));
-        } catch (JwtException | IllegalArgumentException e) {
-            return reject(response, 401, "登录已过期，请重新登录");
-        }
-        request.setAttribute(ATTR_PRINCIPAL, principal);
-
-        // 回库核对账号状态：token 未过期但账号被停用/删除时立即拒绝
-        Integer status;
-        try {
-            status = jdbc.queryForObject(
-                    "SELECT status FROM platform_user WHERE username = ?", Integer.class, principal.username());
-        } catch (EmptyResultDataAccessException e) {
-            return reject(response, 401, "账号不存在或已被删除");
-        }
-        if (status == null || status != 1) {
-            return reject(response, 403, "账号已被停用，请联系管理员");
-        }
-
         String path = request.getRequestURI();
-        // 管理后台接口仅 ADMIN 可访问
-        if (path.startsWith("/api/admin/") && !"ADMIN".equals(principal.role())) {
-            return reject(response, 403, "需要管理员权限");
+        AuthPrincipal principal = authenticate(request, response, path.startsWith("/api/admin/"));
+        if (principal == null) {
+            return false;
         }
 
         // memoryId 归属校验：参数形式（chat/stream）或路径形式（memory、sessions）
@@ -100,6 +82,50 @@ public class AuthInterceptor implements HandlerInterceptor {
             return reject(response, 403, "无权查看其他身份的会话列表");
         }
         return true;
+    }
+
+    /**
+     * 登录态校验（拦截器与 Actuator 过滤器共用）：
+     * Bearer token → 验签 → 回库核对账号状态 →（可选）管理员角色。
+     *
+     * 失败时本方法已把错误响应写好，调用方只需在返回 null 时终止请求。
+     * 抽出来共用是因为「账号被停用即时生效」这类规则一旦有两份实现，
+     * 迟早出现只改了其中一处、另一条路径继续放行的漏洞。
+     */
+    public AuthPrincipal authenticate(HttpServletRequest request, HttpServletResponse response,
+                                      boolean requireAdmin) throws Exception {
+        String header = request.getHeader("Authorization");
+        if (header == null || !header.startsWith("Bearer ")) {
+            reject(response, 401, "未登录或登录已过期");
+            return null;
+        }
+        AuthPrincipal principal;
+        try {
+            principal = jwtService.parse(header.substring(7));
+        } catch (JwtException | IllegalArgumentException e) {
+            reject(response, 401, "登录已过期，请重新登录");
+            return null;
+        }
+        request.setAttribute(ATTR_PRINCIPAL, principal);
+
+        // 回库核对账号状态：token 未过期但账号被停用/删除时立即拒绝
+        Integer status;
+        try {
+            status = jdbc.queryForObject(
+                    "SELECT status FROM platform_user WHERE username = ?", Integer.class, principal.username());
+        } catch (EmptyResultDataAccessException e) {
+            reject(response, 401, "账号不存在或已被删除");
+            return null;
+        }
+        if (status == null || status != 1) {
+            reject(response, 403, "账号已被停用，请联系管理员");
+            return null;
+        }
+        if (requireAdmin && !"ADMIN".equals(principal.role())) {
+            reject(response, 403, "需要管理员权限");
+            return null;
+        }
+        return principal;
     }
 
     /**

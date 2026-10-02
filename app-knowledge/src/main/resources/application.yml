@@ -9,6 +9,25 @@ spring:
     username: root
     password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
+
+# 可观测性：本应用没有登录体系，只暴露不敏感的 health/info；
+# 指标端点（metrics/prometheus）留给已有鉴权的 app-bank。
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+
 ai:
   llm:
     base-url: ${AI_LLM_BASE_URL:https://ws-k4ybdjfu1bcadgfh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}

@@ -17,6 +17,8 @@ import com.ai.workbench.bank.audit.ToolAuditLogger;
 import com.ai.workbench.bank.service.TransferService.PendingOrder;
 import com.ai.workbench.bank.service.TransferService.TransferResult;
 import com.ai.workbench.bank.support.BankTestDb;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -79,8 +81,14 @@ class TransferServiceIT {
         }
 
         @Bean
-        ToolAuditLogger toolAuditLogger(JdbcTemplate jdbcTemplate) {
-            return new ToolAuditLogger(jdbcTemplate);
+        MeterRegistry meterRegistry() {
+            // 内存注册表即可：测试关心的是「打点有没有发生」，不关心导出到哪
+            return new SimpleMeterRegistry();
+        }
+
+        @Bean
+        ToolAuditLogger toolAuditLogger(JdbcTemplate jdbcTemplate, MeterRegistry meterRegistry) {
+            return new ToolAuditLogger(jdbcTemplate, meterRegistry);
         }
 
         @Bean

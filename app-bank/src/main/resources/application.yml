@@ -11,6 +11,28 @@ spring:
     password: ${MYSQL_PASSWORD:204512}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
+# 可观测性：健康检查与指标
+management:
+  endpoints:
+    web:
+      exposure:
+        # metrics/prometheus 不在 /api/** 下，不受银行登录拦截器的路径规则覆盖，
+        # 因此 WebConfig 额外把 /actuator/** 纳入鉴权，且仅放行 health（探针用）。
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      # 健康详情包含数据库地址等内部信息，一律不对调用方展开
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        # readiness 带上 db：数据库不可用时不该继续接流量（liveness 只看进程本身，
+        # 否则数据库抖动会把进程反复重启，反而放大故障）
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+
 ai:
   llm:
     base-url: ${AI_LLM_BASE_URL:https://ws-k4ybdjfu1bcadgfh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}

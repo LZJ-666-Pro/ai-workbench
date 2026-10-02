@@ -56,6 +56,8 @@ export interface AuditLogView {
   toolName: string
   detail: string
   result: 'SUCCESS' | 'DENY' | 'FAIL' | 'ALLOW'
+  /** 对应后端日志里的 [traceId]；历史数据与后台直调为空 */
+  traceId: string | null
   createdAt: string
 }
 

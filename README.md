@@ -161,9 +161,56 @@ Flyway 迁移**（先 `clean` 再 `migrate`），所以迁移脚本一旦写错�
 ## 接口
 
 - `GET /api/chat/{agent}/stream?memoryId=会话ID&message=输入` — SSE 流式对话
-  （事件：`delta` 增量 / `done` 含 token 用量 / `error`）
+  （事件：`delta` 增量 / `done` 含 token 用量 / `error` 含 traceId）
 - `GET /api/chat/agents` — 已注册的 Agent 列表
 - `GET /{agent}` 对应应用静态页（目前 app-bank 有聊天 demo 页）
+
+---
+
+## 可观测性
+
+**traceId 贯穿一次请求**：每个请求由 `TraceIdFilter` 生成或采纳 `X-Trace-Id`
+（只接受 16~32 位十六进制，防止往日志里注入伪造行），写入 MDC 并回写响应头。
+日志格式在 platform-core 的 `logback-spring.xml` 里统一插入 `[traceId]`，一条命令即可拉全：
+
+```bash
+grep 7c8b59d5d7e64324bef41fef0570c8f7 <app.log>
+```
+
+会横跨三类线程——Servlet 请求线程、LLM 客户端的 `onPool-worker-N`、SSE 回调——
+因为 SSE 的增量回调与工具调用都跑在 LangChain4j 的线程池上，MDC 不会自动跟过去。
+两处显式接续：`ChatStreamController` 把回调包在 `TraceContext.runWith` 里；
+工具执行由 `AgentRegistry` 统一按 memoryId 取回 traceId 重新绑定
+（`TraceContext.forMemoryId`），所以 `bank_audit_log.trace_id` 与响应头严格一致。
+出错时 SSE 的 `error` 事件也会带上 traceId，前端直接显示「编号 xxx」，
+用户报障不需要再描述「大概什么时候、哪个客户」。
+
+> 已知边界：一次带工具调用的对话有多轮模型调用。第一轮 token 日志带 traceId，
+> 工具返回后的后续轮次由 LangChain4j 在新线程上重新发起（且 attributes 不跨轮共用），
+> 拿不到 traceId。指标与审计表不受影响。
+
+**指标**（Micrometer → `/actuator/prometheus`，需 ADMIN）：
+
+| 指标 | 标签 | 回答什么问题 |
+|---|---|---|
+| `http.server.requests` | uri/method/status/outcome | 哪个接口在慢、错误率多少（自动采集） |
+| `llm.calls` / `llm.duration` | model / result | 模型错误率高不高、响应多慢 |
+| `llm.tokens` | model / type(input,output) | token 花在哪一头——输入是上下文成本，输出是生成成本，单价不同 |
+| `chat.stream` / `chat.stream.duration` | agent / result | 对话成功率与端到端耗时 |
+| `bank.tool.calls` | tool / result | 风控拒绝率是不是在涨 |
+| `bank.transfer.confirm` | result | 资金操作终态（在事务之外打点，避免「指标说成功、钱没动」） |
+
+**健康检查**：`/actuator/health`、`/actuator/health/readiness`（含 DB 检查）、
+`/actuator/health/liveness`。`readiness` 带 db 而 `liveness` 不带——数据库抖动时
+应该停止接入流量，而不是让进程被反复重启、放大故障。
+
+**鉴权边界**：只有 `/actuator/health` 匿名可访问（探针不带 token，要求认证会让
+readiness 永远失败、服务被判定不可用）；`/actuator/**` 其余端点要求 ADMIN。
+
+> 坑：`WebMvcConfigurer.addInterceptors` 注册的拦截器只作用于 `RequestMappingHandlerMapping`，
+> 而 Actuator 端点由独立的 `WebMvcEndpointHandlerMapping` 处理，**根本不过拦截器**——
+> 在 `addPathPatterns` 里写 `/actuator/**` 是无效的（实测指标可被匿名访问）。
+> 因此指标鉴权改用 `ActuatorAuthFilter`（Servlet Filter，与 HandlerMapping 无关）。
 
 ---
 
@@ -175,6 +222,7 @@ Flyway 迁移**（先 `clean` 再 `migrate`），所以迁移脚本一旦写错�
 | AI 框架 | LangChain4j 1.20.x（OpenAI 兼容接入，默认 GLM glm-4.7-flash，配置化切换） |
 | 存储 | MySQL 8（会话记忆 + 业务数据，容器端口 13306）+ Redis（预留） |
 | 迁移 | Flyway 11（版本化 DDL，`flyway_schema_history` 记录演进，存量库自动 baseline 收敛） |
+| 可观测 | Spring Boot Actuator + Micrometer（Prometheus 端点）；traceId 贯穿日志 / SSE 异步线程 / 审计表 |
 | 向量库 | Postgres + pgvector（知识库阶段启用） |
 | 前端 | Vue3 + Vite，fetch + ReadableStream 手解 SSE 帧 |
 | env | `.env` + spring-dotenv + docker compose 变量替换，一处定义两端生效 |
@@ -185,7 +233,7 @@ Flyway 迁移**（先 `clean` 再 `migrate`），所以迁移脚本一旦写错�
 
 - [x] **Phase 0** 平台底座：LLM 配置化接入、SSE 流式、MySQL 会话记忆、Agent 注册/工具框架、token 用量日志、RAG 配置位、docker-compose
 - [x] **Phase 1** 银行交易 Agent：账户/流水落库 → 转账 + human-in-the-loop 确认卡片、幂等键、审计日志、限额/白名单硬规则
-- [x] **底座硬化**：测试体系（风控/权限单测 + 转账状态机集成测试，77 例）、越权与并发一致性修复（确认单按会话限定、行锁 + READ COMMITTED 串行化、日限额按执行时刻归集）、Flyway 版本化迁移
+- [x] **底座硬化**：测试体系（风控/权限单测 + 转账状态机集成测试，77 例）、越权与并发一致性修复（确认单按会话限定、行锁 + READ COMMITTED 串行化、日限额按执行时刻归集）、Flyway 版本化迁移、可观测性（Actuator 健康检查 + Micrometer 指标 + traceId 贯穿日志与审计表）
 - [ ] **Phase 2** 平台化：合并三应用为 `app-platform`、Spring Security 登录、工具级权限（无权限工具对模型不可见）、平台级审计中心、前端控制台布局（侧边导航 + 全局 AI 助手）、「运营助手」Agent + 只读 SQL 分析工具
 - [ ] **Phase 3** 企业文档中心：真实数据源接入、路由 Agent、查询改写、混合检索（向量 + 全文）、引用溯源、评测集与回归脚本
 - [ ] **Phase 4** 固化：统一部署、评测补齐、架构图 + 关键决策记录（ADR）、简历叙事

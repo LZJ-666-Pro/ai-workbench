@@ -207,7 +207,9 @@ class BankToolProviderTest {
         private final List<Entry> entries = new ArrayList<>();
 
         FakeAuditLogger() {
-            super(null);
+            // 替身只覆写 record，父类的 jdbc / 注册表都不会被用到，
+            // 但构造参数仍需给全（注册表给个内存实现即可，不引入 mock 框架）
+            super(null, new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
         }
 
         @Override

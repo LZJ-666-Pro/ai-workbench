@@ -309,8 +309,10 @@ async function send() {
         reply.content += text
         scrollBottom()
       },
-      onError: (msg) => {
-        reply.content += `\n[错误] ${msg}`
+      onError: (msg, traceId) => {
+        // 带上 traceId：用户报障时直接给出这串编号，运维即可在日志里捞出这次调用的全部行，
+        // 不必再靠「大概什么时间、哪个客户」去猜
+        reply.content += traceId ? `\n[错误] ${msg}（编号 ${traceId}）` : `\n[错误] ${msg}`
       },
     })
   } catch (e) {

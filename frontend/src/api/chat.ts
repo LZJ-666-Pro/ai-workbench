@@ -17,6 +17,8 @@ export interface ChatEvent {
   type: 'delta' | 'done' | 'error' | 'confirm_request'
   content?: string
   totalTokens?: number
+  /** 出错事件附带：用户可凭此编号让运维在日志里定位这一次调用 */
+  traceId?: string
   confirmId?: string
   fromAccount?: string
   toAccount?: string
@@ -255,7 +257,8 @@ export async function streamChat(opts: {
   signal?: AbortSignal
   onDelta: (text: string) => void
   onDone?: (totalTokens: number) => void
-  onError?: (message: string) => void
+  /** traceId 仅在出错时由后端下发，用于把界面上的报错与后端日志对上 */
+  onError?: (message: string, traceId?: string) => void
   onConfirmRequest?: (card: ConfirmRequestData) => void
 }): Promise<void> {
   const url = `${opts.basePath}/api/chat/${opts.agent}/stream`
@@ -289,7 +292,7 @@ export async function streamChat(opts: {
       } else if (evt.type === 'done') {
         opts.onDone?.(evt.totalTokens ?? -1)
       } else if (evt.type === 'error') {
-        opts.onError?.(evt.content ?? '模型调用失败')
+        opts.onError?.(evt.content ?? '模型调用失败', evt.traceId)
       } else if (evt.type === 'confirm_request' && evt.confirmId) {
         opts.onConfirmRequest?.({
           confirmId: evt.confirmId,
