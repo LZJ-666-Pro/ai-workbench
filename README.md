@@ -109,6 +109,43 @@ cd frontend && npm install && npm run dev
 
 ---
 
+## 测试
+
+```bash
+# 全量测试（单元 + 集成），需 JDK 21
+mvn test
+
+# 只跑银行模块
+mvn -pl app-bank -am test
+
+# 前端类型检查
+cd frontend && npm run typecheck
+```
+
+**分层**：
+
+| 层 | 位置 | 依赖 | 说明 |
+|---|---|---|---|
+| 单元测试 `*Test` | `app-bank/src/test/...` | 无 | 风控规则、身份解析、工具权限边界、工具上下文 |
+| 集成测试 `*IT` | 同上 | 真实 MySQL | 转账两段式状态机：建单/确认/幂等/过期/并发/取消/审计 |
+
+集成测试**刻意不用 H2**：被测逻辑的价值几乎全在 MySQL 语义里（`UPDATE ... WHERE status='PENDING'`
+的 CAS 幂等、`balance >= ?` 乐观扣款、DECIMAL 精度、聚合口径），换内存库等于换了个被测对象。
+测试直连独立库 `ai_workbench_test`（与开发库隔离，可随时清空），表结构执行的是各模块
+真实的 `schema.sql`，所以 DDL 一改测试立刻感知。
+
+**环境变量**：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `TEST_MYSQL_URL` | `jdbc:mysql://localhost:13306/ai_workbench_test?createDatabaseIfNotExist=true...` | 测试库地址 |
+| `TEST_MYSQL_USER` / `TEST_MYSQL_PASSWORD` | `root` / `MYSQL_PASSWORD` 或 `204512` | 测试库凭证 |
+| `TEST_MYSQL_REQUIRED` | 未设置 | 设为 `true` 时，测试库不可用将**直接失败**而不是跳过（CI 必须设，否则数据库没起来会让集成测试静默消失、构建依然全绿） |
+
+本机没有 MySQL 时，集成测试会自动跳过，`mvn test` 仍可全绿（本地开发友好）。
+
+---
+
 ## 接口
 
 - `GET /api/chat/{agent}/stream?memoryId=会话ID&message=输入` — SSE 流式对话

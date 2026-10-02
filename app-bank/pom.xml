@@ -66,6 +66,20 @@
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.6</version>
+                <configuration>
+                    <!-- 单元测试 *Test 与集成测试 *IT 统一在 mvn test 执行（不额外引入 failsafe，
+                         保持离线可构建）。集成测试需要真实 MySQL，连不上时由 Assumptions 自动跳过，
+                         因此「没有数据库的机器」上构建依然全绿。 -->
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*IT.java</include>
+                    </includes>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>
