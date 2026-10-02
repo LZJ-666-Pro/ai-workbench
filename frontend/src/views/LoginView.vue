@@ -41,17 +41,59 @@ const rememberMe = ref(true)
 const loading = ref(false)
 const errorMsg = ref('')
 
+const usernameError = ref('')
+const passwordError = ref('')
+
+function validateUsername(): boolean {
+  if (!username.value.trim()) {
+    usernameError.value = `请输入${activePlaceholder.value}`
+    return false
+  }
+  usernameError.value = ''
+  return true
+}
+
+function validatePassword(): boolean {
+  if (!password.value) {
+    passwordError.value = '请输入密码'
+    return false
+  }
+  if (password.value.length < 6) {
+    passwordError.value = '密码长度不能少于 6 位'
+    return false
+  }
+  passwordError.value = ''
+  return true
+}
+
+function onUsernameInput() {
+  if (usernameError.value) validateUsername()
+  errorMsg.value = ''
+}
+
+function onPasswordInput() {
+  if (passwordError.value) validatePassword()
+  errorMsg.value = ''
+}
+
 /** 当前身份标签对应的测试账号（点击填充并高亮） */
 const tabAccount = computed(() => testAccounts.find(a => a.tab === activeTab.value)!)
 
 function fillAccount() {
   username.value = tabAccount.value.username
   password.value = DEMO_PASSWORD
+  usernameError.value = ''
+  passwordError.value = ''
   errorMsg.value = ''
 }
 
 async function submit() {
-  if (!username.value.trim() || !password.value || loading.value) return
+  if (loading.value) return
+  errorMsg.value = ''
+  const uValid = validateUsername()
+  const pValid = validatePassword()
+  if (!uValid || !pValid) return
+
   // 身份边界：演示账号必须在其归属标签下登录，防止"以员工标签登客户账号"的混淆
   const ownerTab = ACCOUNT_TAB[username.value.trim()]
   if (ownerTab && ownerTab !== activeTab.value) {
@@ -62,11 +104,14 @@ async function submit() {
   errorMsg.value = ''
   try {
     await login(username.value.trim(), password.value)
+    ElMessage.success('登录成功，欢迎进入工作台')
     // 支持登录前被拦截的原始目标，如 /admin/dashboard
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
     router.push(redirect)
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '登录失败，请稍后再试'
+    const msg = e instanceof Error ? e.message : '登录失败，请稍后再试'
+    errorMsg.value = msg
+    ElMessage.error(msg)
   } finally {
     loading.value = false
   }
@@ -138,8 +183,8 @@ function notAvailable(feature: string) {
       </div>
 
       <form class="login-form" @submit.prevent="submit">
-        <label class="field">
-          <span class="input-wrap">
+        <div class="field">
+          <div class="input-wrap" :class="{ 'has-error': !!usernameError }">
             <el-icon class="input-icon"><User /></el-icon>
             <input
               v-model="username"
@@ -147,12 +192,15 @@ function notAvailable(feature: string) {
               type="text"
               :placeholder="activePlaceholder"
               autocomplete="username"
+              @blur="validateUsername"
+              @input="onUsernameInput"
             >
-          </span>
-        </label>
+          </div>
+          <div v-if="usernameError" class="field-error-msg">{{ usernameError }}</div>
+        </div>
 
-        <label class="field">
-          <span class="input-wrap">
+        <div class="field">
+          <div class="input-wrap" :class="{ 'has-error': !!passwordError }">
             <el-icon class="input-icon"><Lock /></el-icon>
             <input
               v-model="password"
@@ -160,6 +208,8 @@ function notAvailable(feature: string) {
               :type="showPassword ? 'text' : 'password'"
               placeholder="密码"
               autocomplete="current-password"
+              @blur="validatePassword"
+              @input="onPasswordInput"
             >
             <button
               type="button"
@@ -169,8 +219,9 @@ function notAvailable(feature: string) {
             >
               <el-icon><component :is="showPassword ? Hide : View" /></el-icon>
             </button>
-          </span>
-        </label>
+          </div>
+          <div v-if="passwordError" class="field-error-msg">{{ passwordError }}</div>
+        </div>
 
         <div class="form-row">
           <label class="remember">
@@ -180,7 +231,10 @@ function notAvailable(feature: string) {
           <button type="button" class="link-btn" @click="notAvailable('忘记密码')">忘记密码?</button>
         </div>
 
-        <div v-if="errorMsg" class="error-tip">{{ errorMsg }}</div>
+        <div v-if="errorMsg" class="error-tip" role="alert">
+          <span class="error-icon">⚠️</span>
+          <span>{{ errorMsg }}</span>
+        </div>
 
         <button class="submit-btn" type="submit" :disabled="loading">
           <span v-if="loading" class="spinner" aria-hidden="true"></span>
@@ -390,6 +444,11 @@ function notAvailable(feature: string) {
   flex-direction: column;
   gap: 12px;
 }
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .input-wrap {
   position: relative;
   display: block;
@@ -412,6 +471,25 @@ function notAvailable(feature: string) {
   background: #fff;
   border-color: #1265e0;
   box-shadow: 0 0 0 3px rgba(18, 101, 224, 0.12);
+}
+.input-wrap.has-error .field-input {
+  background: #fff;
+  border-color: #e74c3c;
+  box-shadow: 0 0 0 3px rgba(231, 76, 60, 0.12);
+}
+.input-wrap.has-error .input-icon {
+  color: #e74c3c;
+}
+.field-error-msg {
+  font-size: 12px;
+  color: #e74c3c;
+  padding-left: 4px;
+  line-height: 1.4;
+  animation: fadeIn 0.2s ease-in-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 /* 浏览器自动填充会覆盖填充底色：回填浅灰底、正常字色 */
 .field-input:-webkit-autofill,
@@ -488,7 +566,15 @@ function notAvailable(feature: string) {
   background: #fdeeec;
   border: 1px solid #f5c6c0;
   border-radius: 8px;
-  padding: 7px 10px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  animation: fadeIn 0.2s ease-in-out;
+}
+.error-icon {
+  font-size: 13px;
+  flex-shrink: 0;
 }
 
 /* 登录按钮：品牌蓝渐变 */
