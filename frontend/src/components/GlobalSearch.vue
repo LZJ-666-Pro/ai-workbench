@@ -10,6 +10,7 @@ const keyword = ref('')
 const open = ref(false)
 const loading = ref(false)
 const result = ref<SearchResult | null>(null)
+const failed = ref(false)
 const active = ref(0)
 const root = ref<HTMLElement | null>(null)
 
@@ -49,7 +50,7 @@ const items = computed<Item[]>(() => {
   ]
 })
 
-const isEmpty = computed(() => !loading.value && keyword.value.trim() !== '' && items.value.length === 0)
+const isEmpty = computed(() => !loading.value && !failed.value && keyword.value.trim() !== '' && items.value.length === 0)
 
 watch(keyword, value => {
   window.clearTimeout(debounceTimer)
@@ -57,9 +58,11 @@ watch(keyword, value => {
   if (!q) {
     result.value = null
     loading.value = false
+    failed.value = false
     return
   }
   loading.value = true
+  failed.value = false
   open.value = true
   // 防抖：输入「转账」会触发三次请求，每次都打后端没有意义
   debounceTimer = window.setTimeout(async () => {
@@ -70,7 +73,12 @@ watch(keyword, value => {
       result.value = r
       active.value = 0
     } catch {
-      if (mine === seq) result.value = null
+      // 请求失败与「搜不到」必须分开显示：接口没通时说「没有匹配」是在撒谎，
+      // 会让人以为数据里真没有，而不是去查服务
+      if (mine === seq) {
+        result.value = null
+        failed.value = true
+      }
     } finally {
       if (mine === seq) loading.value = false
     }
@@ -126,8 +134,9 @@ onBeforeUnmount(() => {
       @focus="open = keyword.trim() !== ''"
       @keydown="onKeydown"
     />
-    <div v-if="open && (items.length || isEmpty || loading)" class="gsearch-panel">
+    <div v-if="open && (items.length || isEmpty || failed || loading)" class="gsearch-panel">
       <div v-if="loading && !items.length" class="gs-hint">搜索中…</div>
+      <div v-else-if="failed" class="gs-hint">搜索暂时不可用，请稍后重试</div>
       <div v-else-if="isEmpty" class="gs-hint">没有匹配的「{{ keyword }}」</div>
       <template v-else>
         <template v-for="(item, i) in items" :key="item.key">
