@@ -1,4 +1,4 @@
-package com.ai.workbench.bank.datasource;
+package com.ai.workbench.core.datasource;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
  *
  * 为什么是「真连一次」而不是拼个假状态：数据源页面的价值就在于状态列可信——
  * 数据库真的握手、API 真的发请求、文件路径真的查存在性。探活失败时把异常
- * 摘要写进 status_msg，用户不用翻日志就能看到"连不上"的原因。
+ * 摘要写进 status_msg，用户不用翻日志就能看到"连不通"的原因。
  *
  * 三类探测的超时都压在 3 秒：测试连接是人工操作，宁可报超时也不要让用户等。
  */

@@ -9,6 +9,7 @@ import javax.crypto.SecretKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import com.ai.workbench.core.auth.CorePrincipal;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -21,8 +22,13 @@ import io.jsonwebtoken.security.Keys;
 @Component
 public class JwtService {
 
-    /** 验签后的登录主体：拦截器解析 token 后放进 request attribute */
-    public record AuthPrincipal(String username, String displayName, String role, String identityId) {
+    /**
+     * 验签后的登录主体：拦截器解析 token 后放进 request attribute。
+     * 实现 platform-core 的 CorePrincipal，平台级功能（数据源等）即可声明
+     * 「当前登录用户」参数而不反向依赖本应用。
+     */
+    public record AuthPrincipal(String username, String displayName, String role, String identityId)
+            implements CorePrincipal {
     }
 
     private final SecretKey key;

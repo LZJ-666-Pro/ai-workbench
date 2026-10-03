@@ -1,12 +1,11 @@
-package com.ai.workbench.bank.datasource;
+package com.ai.workbench.core.datasource;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.ai.workbench.bank.auth.AuthInterceptor;
-import com.ai.workbench.bank.auth.JwtService.AuthPrincipal;
+import com.ai.workbench.core.auth.CorePrincipal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.ResponseEntity;
@@ -22,13 +21,17 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 数据源管理（登录即可用；状态与绑定关系是全员可见的平台视图）：
+ * 数据源管理（平台级能力，登录即可用；状态与绑定关系是全员可见的平台视图）：
  *   GET    /api/datasources          列表（含绑定关系，密码脱敏）
  *   POST   /api/datasources          新建登记
  *   PUT    /api/datasources/{id}     编辑（密码留空 = 沿用原值）
  *   DELETE /api/datasources/{id}     删除（级联清绑定关系）
  *   POST   /api/datasources/{id}/test  测试连接：真实探活并回写状态
  *   POST   /api/datasources/{id}/sync  触发同步：刷新最近同步时间
+ *
+ * 放在 platform-core 而不是某个 app-*：数据源是跨应用的平台配置（V7 迁移与
+ * 演示种子同在底座），登记与探活不携带任何银行域语义；当前登录用户经
+ * CorePrincipal 抽象注入，不依赖具体应用的 JWT 实现。
  *
  * 连接凭据随 config 存 JSON。列表与详情返回时把 password 抹成 "******"；
  * 编辑回传空密码表示"不改"，避免把脱敏后的星号存回库里。
@@ -98,7 +101,7 @@ public class DataSourceController {
     @PostMapping
     public ResponseEntity<Map<String, String>> create(
             @RequestBody SaveRequest req,
-            @RequestAttribute(AuthInterceptor.ATTR_PRINCIPAL) AuthPrincipal principal) {
+            @RequestAttribute(CorePrincipal.ATTR_PRINCIPAL) CorePrincipal principal) {
         String error = validate(req);
         if (error != null) {
             return badRequest(error);

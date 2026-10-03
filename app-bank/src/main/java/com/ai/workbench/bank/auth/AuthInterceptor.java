@@ -7,6 +7,7 @@ import java.util.regex.Pattern;
 
 import com.ai.workbench.bank.auth.JwtService.AuthPrincipal;
 import com.ai.workbench.bank.identity.BankIdentity;
+import com.ai.workbench.core.auth.CorePrincipal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,8 +32,12 @@ import org.springframework.web.servlet.HandlerInterceptor;
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
 
-    /** 登录主体在 request attribute 里的键名（Controller 可用 @RequestAttribute 取） */
-    public static final String ATTR_PRINCIPAL = "authUser";
+    /**
+     * 登录主体在 request attribute 里的键名（Controller 可用 @RequestAttribute 取）。
+     * 常量收敛到 platform-core 的 CorePrincipal：平台功能与本拦截器共用同一份键，
+     * 避免"两处字符串、改一处漏一处"。
+     */
+    public static final String ATTR_PRINCIPAL = CorePrincipal.ATTR_PRINCIPAL;
 
     /** 路径里带 memoryId 的接口：/api/memory/{agent}/{memoryId}、/api/sessions/{agent}/{memoryId} */
     private static final Pattern PATH_MEMORY_ID =
