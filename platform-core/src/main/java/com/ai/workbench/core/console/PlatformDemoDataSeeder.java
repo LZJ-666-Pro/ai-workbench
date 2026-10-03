@@ -50,6 +50,7 @@ public class PlatformDemoDataSeeder implements ApplicationRunner {
             seedInterviewSessions();
             seedPlatformEvents();
             seedLlmUsage();
+            seedDataSources();
         } catch (Exception e) {
             // 演示数据失败不该拦截应用启动：页面显示空态即可，不影响任何真实功能
             log.warn("工作台演示数据播种失败（不影响启动）: {}", e.getMessage());
@@ -355,6 +356,57 @@ public class PlatformDemoDataSeeder implements ApplicationRunner {
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, batch);
         log.info("工作台演示数据：写入 LLM 用量 {} 条", batch.size());
+    }
+
+    // ------------------------------------------------------------------
+    // 数据源：平台连接登记的演示样例（与 V7__data_source.sql 的表结构对应）
+    // ------------------------------------------------------------------
+
+    private void seedDataSources() {
+        if (count("data_source") > 0) {
+            return;
+        }
+        // 前两条指向本机真实运行的 MySQL / pgvector 容器，「测试连接」能真实通过；
+        // 后两条是演示域名，开发环境探活失败才是常态，页面因此才有 ERROR 状态可看。
+        Object[][] sources = {
+                {"客户信息主库", "DATABASE", "mysql",
+                        "{\"host\":\"localhost\",\"port\":13306,\"database\":\"ai_workbench\",\"username\":\"root\",\"password\":\"204512\"}",
+                        "OK", "连接成功（MySQL Community Server）", 12, "银行助手的核心业务库，账户与交易数据的唯一权威来源"},
+                {"知识库向量索引", "VECTOR", "pgvector",
+                        "{\"host\":\"localhost\",\"port\":15432,\"database\":\"ai_workbench_vec\",\"username\":\"postgres\",\"password\":\"ai123456\",\"collection\":\"kb_docs\"}",
+                        "OK", "连接成功（PostgreSQL 16 + pgvector）", 35, "知识库文档向量化后的存储与检索底座"},
+                {"产品制度文档库", "DOCUMENT", "oss",
+                        "{\"location\":\"https://aiwb-demo.oss-cn-beijing.aliyuncs.com/docs\",\"format\":\"pdf/docx\"}",
+                        "OK", "存储可达，HTTP 200", 88, "制度库与产品手册的对象存储桶，知识库同步语料的来源"},
+                {"风险规则服务", "API", "http",
+                        "{\"url\":\"https://risk-gateway.demo.internal/api/v1/rules\",\"method\":\"GET\"}",
+                        "ERROR", "UnknownHostException：risk-gateway.demo.internal", null,
+                        "转账风控规则的下发接口，部署在银行内网"},
+        };
+        // 绑定关系：数据源被哪些 Agent 使用（scope = 数据权限范围）
+        String[][] bindings = {
+                {"客户信息主库", "bank", "WRITE"},
+                {"知识库向量索引", "knowledge", "READ"},
+                {"产品制度文档库", "knowledge", "READ"},
+                {"风险规则服务", "bank", "READ"},
+        };
+        for (Object[] src : sources) {
+            jdbc.update("""
+                    INSERT INTO data_source
+                        (name, type, engine, description, config, status, status_msg,
+                         last_sync_at, last_latency_ms, owner)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'admin')
+                    """, src[0], src[1], src[2], src[7], src[3], src[4], src[5],
+                    Timestamp.valueOf(LocalDateTime.now().minusMinutes(20 + random.nextInt(600))),
+                    src[6]);
+        }
+        for (String[] binding : bindings) {
+            jdbc.update("""
+                    INSERT IGNORE INTO data_source_binding (source_id, agent_key, scope)
+                    SELECT id, ?, ? FROM data_source WHERE name = ?
+                    """, binding[1], binding[2], binding[0]);
+        }
+        log.info("工作台演示数据：写入数据源 {} 个（含绑定关系 {} 条）", sources.length, bindings.length);
     }
 
     // ------------------------------------------------------------------

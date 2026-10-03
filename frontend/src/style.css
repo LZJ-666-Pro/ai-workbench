@@ -35,10 +35,23 @@ body {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
   font-size: 16px;
   font-weight: 700;
   color: var(--text);
   text-decoration: none;
+}
+
+/* 眉标：企业智能 Agent 平台（原型顶栏的品牌副标） */
+.brand-tag {
+  font-size: 12px;
+  font-weight: 400;
+  color: #98a2b0;
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+  margin-left: 2px;
 }
 
 .topbar nav {
@@ -46,22 +59,38 @@ body {
   gap: 8px;
 }
 
+/* 顶栏导航：原型形态——激活项蓝字 + 底部通高下划线（不再是实心胶囊）。
+   用 exact-active：'/' 若用前缀匹配（router-link-active），工作台页签在 /apps 下也会高亮 */
 .topbar nav a {
-  padding: 6px 14px;
-  border-radius: 8px;
+  position: relative;
+  padding: 18px 14px;
+  border-radius: 0;
   color: var(--text-dim);
   text-decoration: none;
   font-weight: 500;
+  line-height: 20px;
 }
 
 .topbar nav a:hover {
-  background: #e9f1f9;
+  background: none;
   color: #0b4f9e;
 }
 
-.topbar nav a.router-link-active {
+.topbar nav a.router-link-exact-active {
+  background: none;
+  color: #0b4f9e;
+  font-weight: 600;
+}
+
+.topbar nav a.router-link-exact-active::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 3px;
+  border-radius: 2px 2px 0 0;
   background: #0b4f9e;
-  color: #fff;
 }
 
 /* 管理后台页右上角角色标识（顶栏导航已由侧栏菜单替代） */
@@ -77,13 +106,7 @@ body {
   font-size: 13px;
 }
 
-/* 首页顶栏右侧：环境标识与当前用户（租户上下文） */
-.home-extras {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
+/* 环境标识胶囊（顶栏右侧，可点版本见 App.vue 的 env-tag-btn） */
 .env-tag {
   font-size: 12px;
   color: #0a8f3c;

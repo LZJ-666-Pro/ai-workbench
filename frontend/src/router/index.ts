@@ -6,6 +6,9 @@ const router = createRouter({
   routes: [
     { path: '/login', name: 'login', component: () => import('../views/LoginView.vue'), meta: { public: true } },
     { path: '/', name: 'home', component: () => import('../views/HomeView.vue') },
+    { path: '/apps', name: 'apps', component: () => import('../views/AppCenterView.vue') },
+    { path: '/datasources', name: 'datasources', component: () => import('../views/DataSourceView.vue') },
+    { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
     { path: '/bank', name: 'bank', component: () => import('../views/BankView.vue') },
     { path: '/knowledge', name: 'knowledge', component: () => import('../views/KnowledgeView.vue') },
     { path: '/interview', name: 'interview', component: () => import('../views/InterviewView.vue') },

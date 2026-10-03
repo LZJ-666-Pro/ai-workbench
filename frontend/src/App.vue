@@ -34,39 +34,26 @@ const isChatRoute = computed(() =>
 
 const isAdminRoute = computed(() => route.path.startsWith('/admin'))
 
-/** 首页与开发者页需要更宽的容器（1280px），体现平台容量感 */
-const isWideRoute = computed(() => ['/', '/developers'].includes(route.path))
+/** 数据源/设置页用宽容器（1280px）；工作台与应用中心是通栏门户（portal），自己管宽度 */
+const isWideRoute = computed(() => ['/datasources', '/developers', '/settings'].includes(route.path))
 
 /**
- * 首页工作台自己管理内外边距：上下文条与页脚要做成通栏（左右贴边、边框通到底），
+ * 工作台与应用中心自己管理内外边距：上下文条与页脚要做成通栏（左右贴边、边框通到底），
  * 只有让 .main 让出宽度控制权才做得到。其他页面不受影响。
  */
-const isPortalRoute = computed(() => route.path === '/')
+const isPortalRoute = computed(() => ['/', '/apps'].includes(route.path))
 
-/** 顶栏导航：首页/开发者页是平台级导航（具体应用由应用中心卡片承载）；银行助手页保留其管理后台；管理后台页由侧栏菜单承担导航 */
-const platformLinks = [
-  { to: '/', label: '应用中心' },
-  { to: '/developers', label: '开发者' },
+/** 顶栏固定五页签（管理后台由侧栏菜单承担导航，不显示顶栏页签） */
+const navLinks = [
+  { to: '/', label: '工作台' },
+  { to: '/apps', label: '应用中心' },
+  { to: '/knowledge', label: '知识库' },
+  { to: '/datasources', label: '数据源' },
+  { to: '/settings', label: '设置' },
 ]
-const allLinks = [
-  { to: '/bank', label: '🏦 银行助手' },
-  { to: '/knowledge', label: '📚 知识库' },
-  { to: '/interview', label: '🎤 面试模拟' },
-  { to: '/admin', label: '📊 管理后台' },
-]
-const navLinks = computed(() => {
-  if (isAdminRoute.value) return []
-  if (route.path.startsWith('/bank')) {
-    return allLinks.filter(l => l.to === '/bank' || l.to === '/admin')
-  }
-  if (route.path === '/logs') {
-    return platformLinks
-  }
-  if (isWideRoute.value) {
-    return platformLinks
-  }
-  return allLinks
-})
+
+/** 铃铛与环境切换只在五个平台级页签页面显示；聊天工作区/后台/日志页保持简洁 */
+const isTopPage = computed(() => navLinks.some(l => l.to === route.path))
 
 /** 顶栏用户下拉：管理后台（仅 ADMIN）与退出登录 */
 function onUserCommand(command: string) {
@@ -98,16 +85,17 @@ async function confirmLogout() {
 <template>
   <header v-if="route.path !== '/login'" class="topbar">
     <RouterLink to="/" class="brand">
-      <span class="brand-mark">智</span>
+      <span class="brand-mark"><span class="brand-mark-face">智</span></span>
       <span class="brand-text">智汇工作台</span>
+      <span class="brand-tag">企业智能 Agent 平台</span>
     </RouterLink>
-    <nav v-if="navLinks.length">
+    <nav v-if="!isAdminRoute">
       <RouterLink v-for="link in navLinks" :key="link.to" :to="link.to">{{ link.label }}</RouterLink>
     </nav>
     <!-- 右上角操作区：全局搜索 · 通知铃铛 · 环境切换 · 用户下拉（参照企业控制台样式） -->
     <div class="top-right">
       <GlobalSearch v-if="showSearch" />
-      <template v-if="route.path === '/'">
+      <template v-if="isTopPage">
         <el-popover placement="bottom-end" :width="300" trigger="click">
           <template #reference>
             <!-- 角标取自工作台接口的真实待办条数（通知内容与数字必须一致；
@@ -161,24 +149,30 @@ async function confirmLogout() {
 </template>
 
 <style scoped>
-/* 品牌标识：深蓝圆角方块 + 字，替代原先的 emoji（emoji 在不同系统渲染差异大） */
+/* 品牌标识：深蓝菱形 Logo（旋转 45° 的圆角方块，内部文字反向旋转保持正立） */
 .brand {
   display: inline-flex;
   align-items: center;
   gap: 9px;
 }
 .brand-mark {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
   background: linear-gradient(135deg, #1560b8, #0b3f7e);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 800;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  transform: rotate(45deg);
+  margin: 0 4px;
+}
+.brand-mark-face {
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 800;
+  transform: rotate(-45deg);
+  line-height: 1;
 }
 .brand-text {
   font-size: 16px;
