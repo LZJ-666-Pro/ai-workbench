@@ -150,6 +150,15 @@ public class ChatStreamController {
                     log.error("流式对话出错: {}", error.getMessage(), error);
                     meterRegistry.counter("chat.stream", "agent", agent, "result", "error").increment();
                     recordDuration(agent, startNanos);
+                    // 流中断也要给业务模块补发领域事件的机会：出错前工具可能已创建了转账
+                    // 确认单但卡片还没推——不补的话用户要等下一轮对话或刷新页面才能看到卡片
+                    streamListeners.stream().forEach(listener -> {
+                        try {
+                            listener.onStreamComplete(agent, memoryId, emitter);
+                        } catch (Exception e) {
+                            log.warn("AgentStreamListener 执行失败（错误路径）: {}", e.getMessage(), e);
+                        }
+                    });
                     // 对 GLM 错误码 1305（访问量过大）做友好转换
                     String friendlyMessage = error.getMessage() != null
                             ? error.getMessage()

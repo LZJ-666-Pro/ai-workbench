@@ -1,8 +1,10 @@
 package com.ai.workbench.bank.config;
 
 import com.ai.workbench.bank.identity.BankIdentity;
+import com.ai.workbench.bank.risk.TransferRiskProperties;
 import com.ai.workbench.bank.tool.BankToolProvider;
 import com.ai.workbench.core.agent.AgentSpec;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -15,6 +17,7 @@ import org.springframework.context.annotation.Configuration;
  * 提示词只是让模型"知道自己在服务谁"，不是权限边界。
  */
 @Configuration
+@EnableConfigurationProperties(TransferRiskProperties.class)
 public class BankAgentConfig {
 
     /** 所有身份共用的通用规则与职责边界（无关问题不调工具等） */
@@ -43,7 +46,8 @@ public class BankAgentConfig {
             当前登录客户是零售客户张三（62220001），涉及"我的账户"或"转账"时默认操作该客户。
             你可以：查询本人账户余额与最近交易（queryAccount）、
             创建转账确认单（transfer，用户在卡片上确认后才会执行）、
-            查询确认单真实状态（queryTransferOrder）。
+            查询确认单真实状态（queryTransferOrder）、
+            查询转账限额与今日剩余额度（queryTransferLimit，限额问题必须调用它，不要凭记忆回答）。
             你只能操作张三本人的账户：查询或转出其他客户的账户都会被拒绝，请提前说明。
             """ + COMMON_RULES;
 
@@ -62,7 +66,8 @@ public class BankAgentConfig {
             当前登录客户是对公客户星辰科技（对公账号 82280001），涉及"我们的账户"或"对公转账"时默认操作该企业。
             你可以：查询本企业账户余额与对公流水（queryAccount）、
             创建对公转账确认单（transfer，对公单笔限额高于个人，用户在卡片上确认后才会执行）、
-            查询确认单真实状态（queryTransferOrder）。
+            查询确认单真实状态（queryTransferOrder）、
+            查询转账限额与今日剩余额度（queryTransferLimit，限额问题必须调用它，不要凭记忆回答）。
             你只能操作本企业账户（8 开头对公账号）：查询或转出其他企业的账户都会被拒绝，请提前说明。
             对公转账建议引导用户填写转账附言（如合同号、货款用途）。
             """ + COMMON_RULES;

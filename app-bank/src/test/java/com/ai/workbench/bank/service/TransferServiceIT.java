@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 
 import com.ai.workbench.bank.audit.ToolAuditLogger;
+import com.ai.workbench.bank.risk.TransferRiskProperties;
 import com.ai.workbench.bank.service.TransferService.PendingOrder;
 import com.ai.workbench.bank.service.TransferService.TransferResult;
 import com.ai.workbench.bank.support.BankTestDb;
@@ -94,7 +95,8 @@ class TransferServiceIT {
 
         @Bean
         TransferService transferService(JdbcTemplate jdbcTemplate, ToolAuditLogger audit) {
-            return new TransferService(jdbcTemplate, audit);
+            // 默认档位与生产常量一致：IT 关心转账语义，不关心 yml 绑定
+            return new TransferService(jdbcTemplate, audit, new TransferRiskProperties());
         }
     }
 
@@ -488,6 +490,29 @@ class TransferServiceIT {
         @DisplayName("会话没有待确认单：返回空列表而不是异常")
         void returnsEmptyWhenNothingPending() {
             assertThat(service.listPending(BankTestDb.MEM_RETAIL)).isEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName("限额查询：limitSummary 与风控规则共用同一份数字")
+    class DescribeLimit {
+
+        @Test
+        @DisplayName("零售客户：报出默认档位限额，且包含今日已转与剩余额度")
+        void retailSummaryUsesDefaultLimits() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "100.00");
+            service.confirmOrder(BankTestDb.MEM_RETAIL, confirmId, true);
+
+            String summary = service.describeLimit(BankTestDb.MEM_RETAIL);
+
+            assertThat(summary).contains("零售").contains("5000.00").contains("10000.00")
+                    .contains("今日已转 100.00").contains("剩余可转 9900.00");
+        }
+
+        @Test
+        @DisplayName("内部员工：没有资金操作权限，不给限额数字")
+        void staffHasNoLimitSummary() {
+            assertThat(service.describeLimit(BankTestDb.MEM_STAFF)).doesNotContain("限额");
         }
     }
 

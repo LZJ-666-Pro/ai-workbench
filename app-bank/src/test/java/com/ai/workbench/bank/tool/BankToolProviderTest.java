@@ -74,10 +74,11 @@ class BankToolProviderTest {
     class ToolSetPerIdentity {
 
         @Test
-        @DisplayName("零售客户：能查能转，但看不到员工专属的全行概况")
+        @DisplayName("零售客户：能查能转（含限额查询），但看不到员工专属的全行概况")
         void retailSeesCustomerTools() {
             assertThat(toolNamesFor(MEM_RETAIL))
-                    .containsExactlyInAnyOrder("listAccounts", "queryAccount", "transfer", "queryTransferOrder")
+                    .containsExactlyInAnyOrder("listAccounts", "queryAccount", "transfer",
+                            "queryTransferOrder", "queryTransferLimit")
                     .doesNotContain("bankOverview");
         }
 
@@ -86,14 +87,15 @@ class BankToolProviderTest {
         void staffHasNoMoneyTools() {
             assertThat(toolNamesFor(MEM_STAFF))
                     .containsExactlyInAnyOrder("listAccounts", "queryAccount", "bankOverview")
-                    .doesNotContain("transfer", "queryTransferOrder");
+                    .doesNotContain("transfer", "queryTransferOrder", "queryTransferLimit");
         }
 
         @Test
         @DisplayName("对公客户：与零售同样具备转账工具（限额差异在风控层，不在工具层）")
         void corporateSeesCustomerTools() {
             assertThat(toolNamesFor(MEM_CORPORATE))
-                    .containsExactlyInAnyOrder("listAccounts", "queryAccount", "transfer", "queryTransferOrder")
+                    .containsExactlyInAnyOrder("listAccounts", "queryAccount", "transfer",
+                            "queryTransferOrder", "queryTransferLimit")
                     .doesNotContain("bankOverview");
         }
 

@@ -31,6 +31,16 @@ public class TransferTools {
         }
     }
 
+    @Tool("查询当前客户的转账限额与今日剩余可转额度。"
+            + "用户问「还能转多少」「限额是多少」「今天转过多少」时调用此工具，不要凭提示词里的数字回答")
+    public String queryTransferLimit() {
+        try {
+            return transferService.describeLimit(ToolCallContext.currentMemoryId());
+        } catch (Exception e) {
+            return "查询转账限额异常，请稍后重试。";
+        }
+    }
+
     @Tool("从当前登录客户的账户向他人转账。会先生成一张待确认的转账单，等待用户在确认卡片上操作后才执行")
     public String transfer(
             @P("收款账号或户名") String toAccountOrOwner,

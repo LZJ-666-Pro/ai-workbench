@@ -9,6 +9,7 @@ import java.util.UUID;
 import com.ai.workbench.bank.audit.ToolAuditLogger;
 import com.ai.workbench.bank.identity.BankIdentity;
 import com.ai.workbench.bank.risk.RiskDecision;
+import com.ai.workbench.bank.risk.TransferRiskProperties;
 import com.ai.workbench.bank.risk.TransferRiskRules;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -33,10 +34,12 @@ public class TransferService {
 
     private final JdbcTemplate jdbc;
     private final ToolAuditLogger audit;
+    private final TransferRiskProperties riskProps;
 
-    public TransferService(JdbcTemplate jdbc, ToolAuditLogger audit) {
+    public TransferService(JdbcTemplate jdbc, ToolAuditLogger audit, TransferRiskProperties riskProps) {
         this.jdbc = jdbc;
         this.audit = audit;
+        this.riskProps = riskProps;
     }
 
     /**
@@ -102,7 +105,8 @@ public class TransferService {
         }
 
         RiskDecision decision = TransferRiskRules.check(
-                identity, to.account().get().accountNo(), amount, from.get().balance(),
+                TransferRiskRules.RiskLimits.forIdentity(identity, riskProps),
+                to.account().get().accountNo(), amount, from.get().balance(),
                 transferredToday(from.get().accountNo()));
         if (!decision.allowed()) {
             audit.record(memoryId, "transfer",
@@ -168,6 +172,25 @@ public class TransferService {
                         rs.getString("reason"),
                         rs.getTimestamp("created_at").getTime() + confirmTtlMinutes * 60000),
                 memoryId, cutoff);
+    }
+
+    /**
+     * 供 queryTransferLimit 工具：当前身份的限额档位、今日已用与剩余可转额度。
+     * 与风控规则共用同一份 RiskLimits——「限额是多少」的回答口径必须和「能不能转」
+     * 的判定口径一致，否则模型会拿一套数字、规则执行另一套。
+     */
+    public String describeLimit(String memoryId) {
+        BankIdentity identity = BankIdentity.fromMemoryId(memoryId);
+        if (!identity.canTransfer()) {
+            return "内部员工账号没有资金操作权限。";
+        }
+        TransferRiskRules.RiskLimits limits =
+                TransferRiskRules.RiskLimits.forIdentity(identity, riskProps);
+        BigDecimal today = transferredToday(identity.boundAccount());
+        BigDecimal remaining = limits.maxDaily().subtract(today).max(BigDecimal.ZERO);
+        audit.record(memoryId, "queryTransferLimit", "identity=" + identity.role(), "SUCCESS");
+        return "%s转账限额：单笔最高 %.2f 元，单日累计最高 %.2f 元；今日已转 %.2f 元，剩余可转 %.2f 元。"
+                .formatted(identity.role(), limits.maxSingle(), limits.maxDaily(), today, remaining);
     }
 
     /**
@@ -243,7 +266,8 @@ public class TransferService {
 
         // 规则复检：卡片展示期间余额/日累计可能已被其他交易改变（限额按会话身份分档）
         RiskDecision decision = TransferRiskRules.check(
-                identity, order.toAccount(), order.amount(),
+                TransferRiskRules.RiskLimits.forIdentity(identity, riskProps),
+                order.toAccount(), order.amount(),
                 from.get().balance(), transferredToday(order.fromAccount()));
         if (!decision.allowed()) {
             jdbc.update("UPDATE bank_transfer_order SET status = 'REJECTED' WHERE id = ?", order.id());
