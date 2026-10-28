@@ -34,20 +34,22 @@ const isChatRoute = computed(() =>
 
 const isAdminRoute = computed(() => route.path.startsWith('/admin'))
 
-/** 数据源/设置页用宽容器（1280px）；工作台与应用中心是通栏门户（portal），自己管宽度 */
-const isWideRoute = computed(() => ['/datasources', '/developers', '/settings'].includes(route.path))
+/** 设置页/开发者页用宽容器（1280px）；工作台/应用中心/数据源/知识库页是通栏门户（portal），自己管宽度 */
+const isWideRoute = computed(() => ['/developers', '/settings'].includes(route.path))
 
 /**
- * 工作台与应用中心自己管理内外边距：上下文条与页脚要做成通栏（左右贴边、边框通到底），
- * 只有让 .main 让出宽度控制权才做得到。其他页面不受影响。
+ * 工作台/应用中心/数据源/知识库页自己管理内外边距：上下文条与页脚要做成通栏（左右贴边、
+ * 边框通到底），只有让 .main 让出宽度控制权才做得到。其他页面不受影响。
  */
-const isPortalRoute = computed(() => ['/', '/apps'].includes(route.path))
+const isPortalRoute = computed(() =>
+  route.path === '/' || route.path === '/apps' || route.path === '/datasources'
+  || route.path.startsWith('/knowledgebases'))
 
 /** 顶栏固定五页签（管理后台由侧栏菜单承担导航，不显示顶栏页签） */
 const navLinks = [
   { to: '/', label: '工作台' },
   { to: '/apps', label: '应用中心' },
-  { to: '/knowledge', label: '知识库' },
+  { to: '/knowledgebases', label: '知识库' },
   { to: '/datasources', label: '数据源' },
   { to: '/settings', label: '设置' },
 ]

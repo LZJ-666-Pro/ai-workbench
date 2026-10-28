@@ -7,6 +7,9 @@ const router = createRouter({
     { path: '/login', name: 'login', component: () => import('../views/LoginView.vue'), meta: { public: true } },
     { path: '/', name: 'home', component: () => import('../views/HomeView.vue') },
     { path: '/apps', name: 'apps', component: () => import('../views/AppCenterView.vue') },
+    // 平台级知识库管理：列表 + 详情（/knowledge 是知识库聊天应用，从应用中心进入）
+    { path: '/knowledgebases', name: 'knowledgebases', component: () => import('../views/KnowledgeBaseView.vue') },
+    { path: '/knowledgebases/:id', name: 'kb-detail', component: () => import('../views/KbDetailView.vue') },
     { path: '/datasources', name: 'datasources', component: () => import('../views/DataSourceView.vue') },
     { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
     { path: '/bank', name: 'bank', component: () => import('../views/BankView.vue') },

@@ -4,6 +4,11 @@ server:
 spring:
   application:
     name: app-bank
+  # 知识库文档上传：默认 1MB 太小，按「一次传 10 篇文档」给余量
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 100MB
   datasource:
     url: jdbc:mysql://localhost:13306/ai_workbench?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: root

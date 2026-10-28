@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+import com.ai.workbench.core.kb.TextIndexer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -34,12 +35,14 @@ public class PlatformDemoDataSeeder implements ApplicationRunner {
     private static final int DAYS = 7;
 
     private final JdbcTemplate jdbc;
+    private final TextIndexer indexer;
 
     /** 固定种子：每次全新部署生成同一套数据，便于对照与截图 */
     private final Random random = new Random(20261002L);
 
-    public PlatformDemoDataSeeder(JdbcTemplate jdbc) {
+    public PlatformDemoDataSeeder(JdbcTemplate jdbc, TextIndexer indexer) {
         this.jdbc = jdbc;
+        this.indexer = indexer;
     }
 
     @Override
@@ -51,6 +54,7 @@ public class PlatformDemoDataSeeder implements ApplicationRunner {
             seedPlatformEvents();
             seedLlmUsage();
             seedDataSources();
+            seedKnowledgeSpaces();
         } catch (Exception e) {
             // 演示数据失败不该拦截应用启动：页面显示空态即可，不影响任何真实功能
             log.warn("工作台演示数据播种失败（不影响启动）: {}", e.getMessage());
@@ -407,6 +411,131 @@ public class PlatformDemoDataSeeder implements ApplicationRunner {
                     """, binding[1], binding[2], binding[0]);
         }
         log.info("工作台演示数据：写入数据源 {} 个（含绑定关系 {} 条）", sources.length, bindings.length);
+    }
+
+    // ------------------------------------------------------------------
+    // 知识库：平台级空间 + 真实切片文档（检索测试可真召回）
+    // ------------------------------------------------------------------
+
+    private void seedKnowledgeSpaces() {
+        if (count("kb_space") > 0) {
+            return;
+        }
+        // 每篇文档的正文写成真实制度/说明文本：切片与检索打分都按真实数据走
+        Object[][] spaces = {
+                {"零售业务制度库", "个人银行业务制度、流程与风控要点的统一知识底座",
+                        new String[][]{
+                                {"个人账户转账限额制度", """
+                                        第一条 为防范电信诈骗与资金风险，个人账户转账实行分类限额管理。
+
+                                        第二条 三类户单日转账限额为 2000 元，二类户单日转账限额为 50000 元，
+                                        一类户通过手机银行单日限额 100 万元，超过限额需到柜面办理大额转账。
+
+                                        第三条 新开账户 30 日内，非柜面渠道转账限额为 2000 元/日，
+                                        满 30 日且完成身份核实后自动提升至标准限额。
+
+                                        第四条 向陌生收款人首次转账，系统强制展示防诈提示，
+                                        单笔超过 50000 元时触发人脸核身，未通过不予放行。
+
+                                        第五条 节假日期间限额政策与工作日一致，
+                                        各分行不得擅自上调或下调限额标准。
+                                        """},
+                                {"个人开户业务操作流程", """
+                                        第一章 受理。客户临柜办理个人账户开户，须出示有效身份证件原件，
+                                        柜员双人核验身份，联网核查照片与姓名一致性。
+
+                                        第二章 分类。根据客户提供的辅助材料确定账户类别：
+                                        仅需存取现金与转账的客户可开立二类户；完整功能开立一类户。
+
+                                        第三章 风险评估。开户当日须完成客户风险承受能力评估问卷，
+                                        65 岁以上客户须增加家属联系电话并做防诈告知。
+
+                                        第四章 激活。新账户自助渠道功能默认关闭，
+                                        客户签署电子渠道开通协议后方可使用手机银行转账功能。
+
+                                        第五章 归档。开户资料影像当日上传档案系统，
+                                        纸质资料按会计档案要求保管十五年。
+                                        """},
+                                {"反洗钱可疑交易识别要点", """
+                                        一、短期分散转入集中转出：同一账户 5 个工作日内累计转入 10 笔以上
+                                        且当日集中转出余额 90% 以上的，列为关注对象。
+
+                                        二、频繁现金交易：单周现金存取累计 20 万元以上的，
+                                        调取客户职业与收入信息做穿透核实。
+
+                                        三、身份存疑：证件有效期为 90 天以内的客户办理大额业务的，
+                                        应要求补充有效证件后再受理。
+
+                                        四、触发上报：识别为可疑的交易，柜员当日填写可疑交易报告单，
+                                        经网点负责人复核后报送反洗钱中心，不得告知客户。
+
+                                        五、保密要求：可疑交易识别与上报过程属于保密事项，
+                                        相关记录保存期限不少于五年。
+                                        """},
+                        },
+                        new String[]{"bank"}},
+                {"产品知识库", "智汇工作台平台功能说明与使用指引",
+                        new String[][]{
+                                {"智汇工作台产品概述", """
+                                        智汇工作台是面向企业内部的智能 Agent 平台，将大模型能力封装为
+                                        可直接使用的业务应用，当前提供银行助手、个人知识库、面试模拟器三个应用。
+
+                                        平台具备统一登录、角色权限、运行监控与审计能力：
+                                        管理员可在用户管理中开通账号并分配角色；
+                                        所有对话与工具调用事件都会记录 traceId 便于排障。
+
+                                        应用接入采用注册制：开发者按 OpenAPI 规范登记应用，
+                                        通过探活检测后即出现在应用中心，由管理员决定发布范围。
+                                        """},
+                                {"知识库功能使用指引", """
+                                        知识库用于把企业文档转化为可检索的知识：创建知识库空间，
+                                        上传 txt/md/csv 文档后平台自动完成切片，切片是检索的最小单位。
+
+                                        上传时可在高级配置中调整切片大小（默认 500 字）与切片重叠（默认 50 字），
+                                        配置变更后执行「重建索引」对全部文档重新切片。
+
+                                        检索测试页可输入问题查看召回切片与相关度分数，
+                                        分数为关键词词面命中比例；绑定的 Agent 会在对话时引用这些切片作答。
+                                        """},
+                        },
+                        new String[]{"knowledge"}},
+        };
+        for (Object[] space : spaces) {
+            String name = (String) space[0];
+            jdbc.update("""
+                    INSERT INTO kb_space (name, description, status, chunk_size, chunk_overlap, owner)
+                    VALUES (?, ?, 'BUILDING', 500, 50, 'admin')
+                    """, name, space[1]);
+            Long spaceId = jdbc.queryForObject("SELECT id FROM kb_space WHERE name = ?", Long.class, name);
+            int docs = 0;
+            int chunkTotal = 0;
+            for (String[] doc : (String[][]) space[2]) {
+                String content = doc[1].trim();
+                List<TextIndexer.Chunk> chunks = indexer.chunk(content, 500, 50);
+                jdbc.update("""
+                        INSERT INTO kb_document
+                            (space_id, title, doc_type, size_kb, words, chunks, status, enabled, content, owner)
+                        VALUES (?, ?, 'md', ?, ?, ?, 'READY', 1, ?, 'admin')
+                        """, spaceId, doc[0], Math.max(content.length() / 1024, 1),
+                        content.length(), chunks.size(), content);
+                Long docId = jdbc.queryForObject(
+                        "SELECT id FROM kb_document WHERE space_id = ? ORDER BY id DESC LIMIT 1", Long.class, spaceId);
+                jdbc.batchUpdate(
+                        "INSERT INTO kb_chunk (space_id, doc_id, seq, content, words) VALUES (?, ?, ?, ?, ?)",
+                        chunks.stream()
+                                .map(c -> new Object[]{spaceId, docId, c.seq(), c.content(), c.words()})
+                                .toList());
+                docs++;
+                chunkTotal += chunks.size();
+            }
+            for (String agent : (String[]) space[3]) {
+                jdbc.update("INSERT IGNORE INTO kb_binding (space_id, agent_key) VALUES (?, ?)", spaceId, agent);
+            }
+            jdbc.update("""
+                    UPDATE kb_space SET status = 'READY', doc_count = ?, chunk_total = ? WHERE id = ?
+                    """, docs, chunkTotal, spaceId);
+            log.info("工作台演示数据：写入知识库「{}」（{} 篇文档 / {} 个切片）", name, docs, chunkTotal);
+        }
     }
 
     // ------------------------------------------------------------------
