@@ -257,6 +257,25 @@ export async function respondTransferConfirm(
   return await resp.json() as { ok: boolean; message: string }
 }
 
+/** 恢复卡片用的待确认单：比 ConfirmRequestData 多有效期截止时间（epoch 毫秒，前端渲染倒计时） */
+export interface PendingTransfer extends ConfirmRequestData {
+  expiresAt: number
+}
+
+/**
+ * 拉取本会话仍在有效期内的待确认转账单（后端只返回未过期的 PENDING 单）。
+ * 卡片原本只随 SSE 流结束推一次，页面刷新/切换会话后需要用本接口重建卡片，
+ * 否则用户拿着"确认单已创建"的回复却找不到卡片可确认。
+ */
+export async function fetchPendingTransfers(basePath: string, memoryId: string): Promise<PendingTransfer[]> {
+  const resp = await apiFetch(
+    `${basePath}/api/transfer/pending?memoryId=${encodeURIComponent(memoryId)}`)
+  if (!resp.ok) {
+    throw new Error(await describeFailure(resp))
+  }
+  return await resp.json() as PendingTransfer[]
+}
+
 /** SSE 流式对话客户端：fetch + ReadableStream 手动解析 text/event-stream 帧。
  *
  * 后端事件格式（platform-core ChatStreamController）：

@@ -229,6 +229,26 @@ class TransferServiceIT {
         }
 
         @Test
+        @DisplayName("收款方同名歧义：户名命中多户时拒绝建单，提供账号后不受影响")
+        void ambiguousOwnerNameIsRejected() {
+            // 与 ACC_PAYEE 同名的第二个客户：靠 LIMIT 1 会随机命中其中一个，转错人是资金事故
+            BankTestDb.jdbc().update(
+                    "INSERT INTO bank_account (account_no, owner, balance) VALUES ('62220098', '测试收款人', 0.00)");
+
+            TransferResult byName = service.createPendingOrder(
+                    BankTestDb.MEM_RETAIL, "测试收款人", new BigDecimal("100.00"), null);
+
+            assertThat(byName.kind()).isEqualTo("DENY");
+            assertThat(byName.message()).contains("2 个").contains("账号");
+            assertThat(BankTestDb.countOrders(BankTestDb.MEM_RETAIL)).isZero();
+
+            TransferResult byNo = service.createPendingOrder(
+                    BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, new BigDecimal("100.00"), null);
+
+            assertThat(byNo.kind()).as("提供账号后正常建单").isEqualTo("PENDING");
+        }
+
+        @Test
         @DisplayName("未通知的确认单只会被取走一次（避免每轮流式都重发卡片）")
         void pendingOrderIsNotifiedOnlyOnce() {
             createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
@@ -437,6 +457,37 @@ class TransferServiceIT {
         @DisplayName("会话没有任何单据：明确回答没有，而不是编造")
         void reportsNoOrder() {
             assertThat(service.describeOrder(BankTestDb.MEM_RETAIL, null)).contains("没有找到");
+        }
+    }
+
+    @Nested
+    @DisplayName("待确认单恢复：前端刷新/切会话后重建卡片的数据源")
+    class ListPending {
+
+        @Test
+        @DisplayName("只返回本会话未过期的 PENDING 单，并带过期时间戳")
+        void returnsOnlyUnexpiredPendingOfSession() {
+            String keep = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "100.00");
+            String expired = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+            BankTestDb.backdateOrder(expired, 11);
+            createOrder(BankTestDb.MEM_CORPORATE, BankTestDb.ACC_PAYEE, "300.00");
+            String executed = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "400.00");
+            service.confirmOrder(BankTestDb.MEM_RETAIL, executed, true);
+
+            List<TransferService.PendingOrderView> pending = service.listPending(BankTestDb.MEM_RETAIL);
+
+            assertThat(pending).as("过期/已执行/他人会话的单都不出现")
+                    .extracting(TransferService.PendingOrderView::confirmId)
+                    .containsExactly(keep);
+            assertThat(pending.get(0).expiresAt()).isGreaterThan(System.currentTimeMillis());
+            assertThat(pending.get(0).toOwner()).isEqualTo("测试收款人");
+            assertThat(pending.get(0).toAccount()).isEqualTo(BankTestDb.ACC_PAYEE);
+        }
+
+        @Test
+        @DisplayName("会话没有待确认单：返回空列表而不是异常")
+        void returnsEmptyWhenNothingPending() {
+            assertThat(service.listPending(BankTestDb.MEM_RETAIL)).isEmpty();
         }
     }
 

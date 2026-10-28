@@ -32,6 +32,18 @@ public class DbBankService {
         return found.stream().findFirst();
     }
 
+    /** 按户名精确匹配的全部账户：供查询工具做同名歧义提示（命中多户时不猜，要求提供账号） */
+    public List<Account> findAllByOwner(String owner) {
+        return jdbc.query(
+                "SELECT account_no, owner, balance FROM bank_account WHERE owner = ? ORDER BY account_no",
+                (rs, i) -> new Account(
+                        rs.getString("account_no"),
+                        rs.getString("owner"),
+                        rs.getBigDecimal("balance"),
+                        recentTransactions(rs.getString("account_no"))),
+                owner);
+    }
+
     public String allAccounts() {
         List<String> items = jdbc.query(
                 "SELECT account_no, owner, balance FROM bank_account ORDER BY account_no",

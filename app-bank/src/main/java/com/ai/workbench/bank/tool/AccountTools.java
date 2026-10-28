@@ -6,6 +6,7 @@ import com.ai.workbench.bank.service.Account;
 import com.ai.workbench.bank.service.DbBankService;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
 
@@ -53,6 +54,15 @@ public class AccountTools {
                     "target=%s".formatted(accountOrOwner), "DENY");
             return "查询被拒绝：%s只能查询%s的账户（%s）。".formatted(
                     identity.displayName(), identity.role(), identity.boundAccount());
+        }
+        // 同名歧义：按户名命中多个账户时不猜（find 的 LIMIT 1 命中谁取决于存储顺序），
+        // 要求提供账号精确查询；输入本身就是账号（等于命中账户的 accountNo）时不受影响
+        List<Account> sameName = bankService.findAllByOwner(accountOrOwner);
+        if (!accountOrOwner.equals(found.get().accountNo()) && sameName.size() > 1) {
+            audit.record(ToolCallContext.currentMemoryId(), "queryAccount",
+                    "同名歧义: " + accountOrOwner, "FAIL");
+            return "找到 %d 个名为「%s」的客户，请提供完整账号精确查询。"
+                    .formatted(sameName.size(), accountOrOwner);
         }
         audit.record(ToolCallContext.currentMemoryId(), "queryAccount",
                 "target=%s".formatted(accountOrOwner), "SUCCESS");

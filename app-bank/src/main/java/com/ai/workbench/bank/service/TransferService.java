@@ -68,6 +68,15 @@ public class TransferService {
 
     }
 
+    /**
+     * 恢复卡片用的待确认单视图：比 PendingOrder 多 expiresAt（有效期截止的 epoch 毫秒），
+     * 前端据此渲染倒计时——过期单不返回，与 confirm 接口的过期判定口径一致。
+     */
+    public record PendingOrderView(String confirmId, String fromAccount, String toAccount,
+                                   String toOwner, BigDecimal amount, String reason, long expiresAt) {
+
+    }
+
     /** 模型可调用的第一段：预检 + 建 PENDING 单，不碰钱。付款账户由服务对象身份决定 */
     public TransferResult createPendingOrder(String memoryId, String toAccountOrOwner,
                                              BigDecimal amount, String reason) {
@@ -80,20 +89,24 @@ public class TransferService {
         if (from.isEmpty()) {
             return TransferResult.fail("付款账户不存在");
         }
-        Optional<Account> to = findAccount(toAccountOrOwner);
-        if (to.isEmpty()) {
+        RecipientLookup to = findRecipient(toAccountOrOwner);
+        if (to.denyReason() != null) {
+            audit.record(memoryId, "transfer", "收款方歧义: " + toAccountOrOwner, "DENY");
+            return TransferResult.deny(to.denyReason());
+        }
+        if (to.account().isEmpty()) {
             return TransferResult.fail("未找到收款账户「%s」".formatted(toAccountOrOwner));
         }
-        if (from.get().accountNo().equals(to.get().accountNo())) {
+        if (from.get().accountNo().equals(to.account().get().accountNo())) {
             return TransferResult.deny("不能向本人账户转账");
         }
 
         RiskDecision decision = TransferRiskRules.check(
-                identity, to.get().accountNo(), amount, from.get().balance(),
+                identity, to.account().get().accountNo(), amount, from.get().balance(),
                 transferredToday(from.get().accountNo()));
         if (!decision.allowed()) {
             audit.record(memoryId, "transfer",
-                    "预检拒绝: to=%s, amount=%s".formatted(to.get().accountNo(), amount), "DENY");
+                    "预检拒绝: to=%s, amount=%s".formatted(to.account().get().accountNo(), amount), "DENY");
             return TransferResult.deny("转账被风控拦截：" + decision.reason());
         }
 
@@ -101,14 +114,14 @@ public class TransferService {
         jdbc.update("""
                 INSERT INTO bank_transfer_order (confirm_id, memory_id, from_account, to_account, amount, reason, status)
                 VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
-                """, confirmId, memoryId, from.get().accountNo(), to.get().accountNo(), amount,
+                """, confirmId, memoryId, from.get().accountNo(), to.account().get().accountNo(), amount,
                 reason == null || reason.isBlank() ? null : reason);
         audit.record(memoryId, "transfer",
-                "创建确认单 %s: to=%s, amount=%s".formatted(confirmId, to.get().accountNo(), amount), "PENDING");
+                "创建确认单 %s: to=%s, amount=%s".formatted(confirmId, to.account().get().accountNo(), amount), "PENDING");
         return TransferResult.pending(
                 "转账确认单已创建（确认码 %s）：%s（%s）→ %s（%s），金额 %.2f 元，等待用户确认。"
                         .formatted(confirmId, from.get().accountNo(), from.get().owner(),
-                                to.get().accountNo(), to.get().owner(), amount));
+                                to.account().get().accountNo(), to.account().get().owner(), amount));
     }
 
     /** 底座流结束时回调：取本会话还没推送过卡片的确认单，并标记已推送（避免每轮都重发） */
@@ -130,6 +143,31 @@ public class TransferService {
             jdbc.update("UPDATE bank_transfer_order SET notified = 1 WHERE confirm_id = ?", order.confirmId());
         }
         return orders;
+    }
+
+    /**
+     * 恢复卡片的数据源：本会话仍在有效期内的待确认单。
+     * 卡片原本只随 SSE 流推一次，页面刷新/切换会话/流被中止后就「断线失联」——
+     * 用户拿着模型"确认单已创建"的回复却找不到卡片可点。前端加载会话时调
+     * GET /api/transfer/pending 用本方法重建卡片。过期单不再返回：与 confirm
+     * 的过期判定同一口径，避免恢复出一张点了必被拒的死卡。
+     */
+    public List<PendingOrderView> listPending(String memoryId) {
+        Timestamp cutoff = new Timestamp(System.currentTimeMillis() - confirmTtlMinutes * 60000);
+        return jdbc.query("""
+                SELECT confirm_id, from_account, to_account, amount, reason, created_at
+                FROM bank_transfer_order
+                WHERE memory_id = ? AND status = 'PENDING' AND created_at > ?
+                ORDER BY id ASC LIMIT 10
+                """, (rs, i) -> new PendingOrderView(
+                        rs.getString("confirm_id"),
+                        rs.getString("from_account"),
+                        rs.getString("to_account"),
+                        ownerOf(rs.getString("to_account")),
+                        rs.getBigDecimal("amount"),
+                        rs.getString("reason"),
+                        rs.getTimestamp("created_at").getTime() + confirmTtlMinutes * 60000),
+                memoryId, cutoff);
     }
 
     /**
@@ -331,23 +369,69 @@ public class TransferService {
         return found.stream().findFirst();
     }
 
+    /** 收款户名展示；账户被删除时给占位而不是让查询炸 500 */
     private String ownerOf(String accountNo) {
-        return jdbc.queryForObject(
-                "SELECT owner FROM bank_account WHERE account_no = ?", String.class, accountNo);
+        List<String> owners = jdbc.query(
+                "SELECT owner FROM bank_account WHERE account_no = ?",
+                (rs, i) -> rs.getString(1), accountNo);
+        return owners.isEmpty() ? "（账户已注销）" : owners.get(0);
     }
 
     private String note(String reason) {
         return reason == null || reason.isBlank() ? "" : "，附言「%s」".formatted(reason);
     }
 
-    /** 只取账户本身（不查明细），账号/户名精确匹配，优先账号 */
-    private Optional<Account> findAccount(String accountNoOrOwner) {
+    /** 只取账户本身（不查明细），账号精确匹配 */
+    private Optional<Account> findAccount(String accountNo) {
         List<Account> found = jdbc.query(
-                "SELECT account_no, owner, balance FROM bank_account WHERE account_no = ? OR owner = ? LIMIT 1",
+                "SELECT account_no, owner, balance FROM bank_account WHERE account_no = ?",
                 (rs, i) -> new Account(rs.getString("account_no"), rs.getString("owner"),
                         rs.getBigDecimal("balance"), List.of()),
-                accountNoOrOwner, accountNoOrOwner);
+                accountNo);
         return found.stream().findFirst();
+    }
+
+    /** 收款方解析结果：account 命中的账户；denyReason 非空表示同名歧义，需用户提供账号 */
+    private record RecipientLookup(Optional<Account> account, String denyReason) {
+
+        static RecipientLookup found(Account account) {
+            return new RecipientLookup(Optional.of(account), null);
+        }
+
+        static RecipientLookup ambiguous(String denyReason) {
+            return new RecipientLookup(Optional.empty(), denyReason);
+        }
+
+        static RecipientLookup notFound() {
+            return new RecipientLookup(Optional.empty(), null);
+        }
+    }
+
+    /**
+     * 解析收款方：账号精确匹配优先；按户名命中多个账户时拒绝。
+     * 「给李四转 200」在库里出现第二个李四后，绝不能靠 OR ... LIMIT 1 碰运气——
+     * 命中的是谁取决于存储顺序，转错人就是资金事故。必须让用户提供账号。
+     */
+    private RecipientLookup findRecipient(String accountNoOrOwner) {
+        List<Account> byNo = jdbc.query(
+                "SELECT account_no, owner, balance FROM bank_account WHERE account_no = ?",
+                (rs, i) -> new Account(rs.getString("account_no"), rs.getString("owner"),
+                        rs.getBigDecimal("balance"), List.of()),
+                accountNoOrOwner);
+        if (!byNo.isEmpty()) {
+            return RecipientLookup.found(byNo.get(0));
+        }
+        List<Account> byOwner = jdbc.query(
+                "SELECT account_no, owner, balance FROM bank_account WHERE owner = ? ORDER BY account_no",
+                (rs, i) -> new Account(rs.getString("account_no"), rs.getString("owner"),
+                        rs.getBigDecimal("balance"), List.of()),
+                accountNoOrOwner);
+        if (byOwner.size() > 1) {
+            return RecipientLookup.ambiguous(
+                    "找到 %d 个名为「%s」的客户，为避免转错人，请提供完整收款账号后再转账"
+                            .formatted(byOwner.size(), accountNoOrOwner));
+        }
+        return byOwner.isEmpty() ? RecipientLookup.notFound() : RecipientLookup.found(byOwner.get(0));
     }
 
     private record OrderRow(Long id, String confirmId, String fromAccount, String toAccount,

@@ -1,5 +1,6 @@
 package com.ai.workbench.bank.api;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import com.ai.workbench.bank.auth.AuthInterceptor;
@@ -9,9 +10,11 @@ import com.ai.workbench.bank.service.TransferService.TransferResult;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -41,6 +44,21 @@ public class TransferConfirmController {
 
     public record ConfirmResponse(boolean ok, String message) {
 
+    }
+
+    /**
+     * 本会话仍在有效期内的待确认单（前端刷新/切会话后重建卡片用）。
+     * 卡片原本只随 SSE 流结束推一次，页面刷新后就失联了——恢复入口必须存在。
+     */
+    @GetMapping("/pending")
+    public List<TransferService.PendingOrderView> pending(
+            @RequestParam("memoryId") String memoryId, HttpServletRequest http) {
+        // 与 confirm 同样的归属校验；AuthInterceptor 也会对 memoryId 查询参数做一遍，这里兜底
+        AuthPrincipal principal = (AuthPrincipal) http.getAttribute(AuthInterceptor.ATTR_PRINCIPAL);
+        if (principal != null && !AuthInterceptor.memoryIdBelongsTo(principal.identityId(), memoryId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权查看其他身份的转账确认单");
+        }
+        return transferService.listPending(memoryId);
     }
 
     @PostMapping("/confirm")

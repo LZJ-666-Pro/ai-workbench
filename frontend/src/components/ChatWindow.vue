@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions, listIdentities, getIdentity, setIdentity } from '../api/chat'
+import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions, listIdentities, getIdentity, setIdentity, fetchPendingTransfers } from '../api/chat'
 import type { ConfirmRequestData, IdentityInfo } from '../api/chat'
 
 export interface Suggestion {
@@ -46,6 +46,8 @@ const emit = defineEmits<{
 
 interface CardMsg extends ConfirmRequestData {
   status: 'pending' | 'processing' | 'confirmed' | 'cancelled'
+  /** 有效期截止（epoch 毫秒）：SSE 流里推的卡片没有，恢复接口带回，用于倒计时与过期置灰 */
+  expiresAt?: number
 }
 
 interface Msg {
@@ -75,6 +77,10 @@ let controller: AbortController | null = null
 // 会话删除：menuFor = 展开"…"菜单的会话 ID；pendingDelete = 等待确认删除的会话
 const menuFor = ref<string | null>(null)
 const pendingDelete = ref<SidebarSession | null>(null)
+
+// 待确认卡片倒计时的时钟：每秒跳一次，只影响带 expiresAt 的卡片渲染
+const nowTick = ref(Date.now())
+let tickTimer: ReturnType<typeof setInterval> | undefined
 
 // 多服务对象：可选身份列表与当前身份（仅 enableIdentity 时使用）
 const identityList = ref<IdentityInfo[]>([])
@@ -133,9 +139,15 @@ onMounted(async () => {
     cacheMessages(props.agent, memoryId, histRes.value)
   }
   scrollBottom()
+  // 卡片恢复与倒计时时钟：刷新/切会话后，仍在有效期内的待确认转账单要重建卡片
+  tickTimer = setInterval(() => { nowTick.value = Date.now() }, 1000)
+  restorePendingCards()
 })
 
-onBeforeUnmount(() => controller?.abort())
+onBeforeUnmount(() => {
+  controller?.abort()
+  if (tickTimer) clearInterval(tickTimer)
+})
 
 /** 会话标题摘要（存 localStorage，DB 只存 memoryId） */
 function loadLabelMap(): Record<string, string> {
@@ -215,6 +227,8 @@ async function switchSession(sessionId: string) {
       messages.value = []
     }
   } catch { /* keep cached messages */ }
+  // 切会话同样要恢复该会话的待确认卡片
+  restorePendingCards()
   // 更新列表顺序（把选中的移到最前）
   const idx = sessions.value.findIndex(s => s.memoryId === sessionId)
   if (idx >= 0) {
@@ -314,6 +328,11 @@ async function send() {
         // 不必再靠「大概什么时间、哪个客户」去猜
         reply.content += traceId ? `\n[错误] ${msg}（编号 ${traceId}）` : `\n[错误] ${msg}`
       },
+      onConfirmRequest: (card) => {
+        // 转账确认卡片（human-in-the-loop）：模型只创建待确认单，用户在卡片上确认后资金才变动
+        messages.value.push({ role: 'assistant', kind: 'card', content: '', card: { ...card, status: 'pending' } })
+        scrollBottom()
+      },
     })
   } catch (e) {
     // 用「请求失败」而非「连接失败」：这里的 e.message 可能是后端护栏的限流提示
@@ -330,6 +349,38 @@ async function send() {
     // 消息发出后重新加载会话列表（因为可能产生新的会话）
     loadSessions()
   }
+}
+
+/** 会话加载后恢复仍在有效期内的待确认卡片：刷新/切会话/流中断后不再「断线失联」 */
+async function restorePendingCards() {
+  if (props.agent !== 'bank') return
+  try {
+    const pending = await fetchPendingTransfers(props.basePath, memoryId)
+    if (!pending.length) return
+    // 只补界面里没有的：本轮流式已推过的确认码跳过，避免同一张单出现两张卡
+    const known = new Set(
+      messages.value.filter(m => m.kind === 'card' && m.card).map(m => m.card!.confirmId))
+    let added = false
+    for (const p of pending) {
+      if (known.has(p.confirmId)) continue
+      messages.value.push({ role: 'assistant', kind: 'card', content: '', card: { ...p, status: 'pending' } })
+      added = true
+    }
+    if (added) scrollBottom()
+  } catch { /* 后端不可用时静默：历史消息照常展示 */ }
+}
+
+/** 待确认卡片是否已超过有效期（后端 confirm 也会拒，这里提前置灰免得用户白点） */
+function cardExpired(card: CardMsg): boolean {
+  return card.expiresAt !== undefined && card.expiresAt <= nowTick.value
+}
+
+/** 卡片剩余有效期文案（分:秒）；流内实时推送的卡片没有 expiresAt，不显示 */
+function ttlText(card: CardMsg): string {
+  if (!card.expiresAt || card.status !== 'pending') return ''
+  const leftSec = Math.floor((card.expiresAt - nowTick.value) / 1000)
+  if (leftSec <= 0) return ''
+  return `剩 ${Math.floor(leftSec / 60)}:${String(leftSec % 60).padStart(2, '0')}`
 }
 
 /** 确认卡片操作：调后端确认接口，结果以普通消息回显 */
@@ -522,10 +573,12 @@ function formatTime(timestamp: string): string {
                 <div class="card-row"><span class="k">收款人</span><span>{{ m.card.toOwner }}（{{ m.card.toAccount }}）</span></div>
                 <div class="card-row"><span class="k">付款账户</span><span>{{ m.card.fromAccount }}</span></div>
                 <div v-if="m.card.reason" class="card-row"><span class="k">附言</span><span>{{ m.card.reason }}</span></div>
-                <div v-if="m.card.status === 'pending'" class="card-actions">
+                <div v-if="m.card.status === 'pending' && !cardExpired(m.card)" class="card-actions">
                   <button class="primary" @click="respondCard(m.card, 'confirm')">确认转账</button>
                   <button class="ghost" @click="respondCard(m.card, 'cancel')">取消</button>
+                  <span v-if="ttlText(m.card)" class="card-ttl">{{ ttlText(m.card) }}</span>
                 </div>
+                <div v-else-if="m.card.status === 'pending'" class="card-status">⏰ 确认已超时，请重新发起转账</div>
                 <div v-else-if="m.card.status === 'processing'" class="card-status">处理中…</div>
                 <div v-else-if="m.card.status === 'confirmed'" class="card-status ok">✅ 已确认</div>
                 <div v-else class="card-status">🚫 已取消</div>
@@ -1312,6 +1365,16 @@ function formatTime(timestamp: string): string {
 .card-actions .ghost:hover {
   border-color: var(--text-dim);
   color: var(--text);
+}
+
+/* 卡片倒计时：红色等宽数字，贴操作按钮右侧 */
+.card-ttl {
+  margin-left: auto;
+  align-self: center;
+  font-size: 12px;
+  color: #e5484d;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .card-status {
