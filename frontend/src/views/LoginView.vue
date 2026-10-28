@@ -21,18 +21,6 @@ type TabKey = (typeof TABS)[number]['key']
 
 const activeTab = ref<TabKey>('personal')
 const activePlaceholder = computed(() => TABS.find(t => t.key === activeTab.value)!.placeholder)
-const TAB_LABEL: Record<TabKey, string> = { personal: '个人用户', corporate: '企业用户', staff: '内部员工' }
-
-/** 测试账号：归属到身份选项卡，点击填充（密码 Demo@2026） */
-const DEMO_PASSWORD = 'Demo@2026'
-const testAccounts: { tab: TabKey; username: string; name: string; desc: string }[] = [
-  { tab: 'personal', username: 'zhangsan', name: '张三', desc: '零售客户 · 管理员' },
-  { tab: 'corporate', username: 'corp001', name: '星辰科技', desc: '对公客户' },
-  { tab: 'staff', username: 'staff001', name: '小陈', desc: '内部员工 · 只读' },
-]
-/** 账号 → 归属身份（演示账号固定映射；未登记账号直接交后端校验） */
-const ACCOUNT_TAB: Record<string, TabKey> =
-  Object.fromEntries(testAccounts.map(a => [a.username, a.tab]))
 
 const username = ref('')
 const password = ref('')
@@ -76,30 +64,12 @@ function onPasswordInput() {
   errorMsg.value = ''
 }
 
-/** 当前身份标签对应的测试账号（点击填充并高亮） */
-const tabAccount = computed(() => testAccounts.find(a => a.tab === activeTab.value)!)
-
-function fillAccount() {
-  username.value = tabAccount.value.username
-  password.value = DEMO_PASSWORD
-  usernameError.value = ''
-  passwordError.value = ''
-  errorMsg.value = ''
-}
-
 async function submit() {
   if (loading.value) return
   errorMsg.value = ''
   const uValid = validateUsername()
   const pValid = validatePassword()
   if (!uValid || !pValid) return
-
-  // 身份边界：演示账号必须在其归属标签下登录，防止"以员工标签登客户账号"的混淆
-  const ownerTab = ACCOUNT_TAB[username.value.trim()]
-  if (ownerTab && ownerTab !== activeTab.value) {
-    errorMsg.value = `该账号属于「${TAB_LABEL[ownerTab]}」身份，请切换到对应标签后登录`
-    return
-  }
   loading.value = true
   errorMsg.value = ''
   try {
@@ -253,20 +223,6 @@ function notAvailable(feature: string) {
         </button>
         <button type="button" class="alt-btn" @click="notAvailable('SSO 单点登录')">
           <el-icon><Connection /></el-icon>SSO 单点登录
-        </button>
-      </div>
-
-      <!-- 测试账号：跟随身份选项卡变化（演示便捷入口） -->
-      <div class="demo-area">
-        <div class="demo-caption">测试账号（密码 {{ DEMO_PASSWORD }}，点击填充）</div>
-        <button
-          type="button"
-          class="demo-chip"
-          :class="{ filled: username === tabAccount.username }"
-          @click="fillAccount"
-        >
-          <span class="demo-name">{{ tabAccount.name }}</span>
-          <span class="demo-desc">{{ tabAccount.desc }}</span>
         </button>
       </div>
 
@@ -652,46 +608,6 @@ function notAvailable(feature: string) {
   border-color: #1265e0;
   color: #1265e0;
 }
-
-/* 测试账号：跟随选项卡，单卡填充 + 选中高亮 */
-.demo-area {
-  margin-top: 14px;
-  border-top: 1px dashed #e0e6ee;
-  padding-top: 10px;
-}
-.demo-caption {
-  font-size: 11.5px;
-  color: #98a2b0;
-  margin-bottom: 7px;
-}
-.demo-chip {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid #e5e8ec;
-  background: #fafcfe;
-  border-radius: 8px;
-  padding: 7px 12px;
-  cursor: pointer;
-  font-size: 12.5px;
-  text-align: left;
-  transition: border-color 0.15s, background 0.15s;
-}
-.demo-chip:hover {
-  border-color: #9fbcd9;
-  background: #f2f7fc;
-}
-.demo-chip.filled {
-  border-color: #1265e0;
-  background: #eef4fd;
-}
-.demo-name {
-  font-weight: 700;
-  color: #12263f;
-  min-width: 56px;
-}
-.demo-desc { color: #8a97a8; }
 
 /* 卡内安全标语 */
 .card-sec {
