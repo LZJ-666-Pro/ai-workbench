@@ -261,23 +261,30 @@ export async function respondTransferConfirm(
   return await resp.json() as { ok: boolean; message: string }
 }
 
-/** 恢复卡片用的待确认单：比 ConfirmRequestData 多有效期截止时间（epoch 毫秒，前端渲染倒计时） */
-export interface PendingTransfer extends ConfirmRequestData {
-  expiresAt: number
+/**
+ * 本会话交易单：PENDING（待确认，带 expiresAt 渲染倒计时）与
+ * EXECUTED（已执行，带 bankRef/executedAt 支撑「查看电子回单」入口）两种状态。
+ */
+export interface TransferOrderView extends ConfirmRequestData {
+  status: 'PENDING' | 'EXECUTED'
+  bankRef?: string | null
+  executedAt?: number | null
+  /** PENDING 单的有效期截止（epoch 毫秒）；EXECUTED 单为 null */
+  expiresAt?: number | null
 }
 
 /**
- * 拉取本会话仍在有效期内的待确认转账单（后端只返回未过期的 PENDING 单）。
- * 卡片原本只随 SSE 流结束推一次，页面刷新/切换会话后需要用本接口重建卡片，
- * 否则用户拿着"确认单已创建"的回复却找不到卡片可确认。
+ * 拉取本会话交易单（前端刷新/切会话后重建卡片的唯一数据源）。
+ * 卡片原本只随 SSE 流结束推一次，页面刷新/切换会话后需要用本接口重建——
+ * 待确认卡片丢了没法确认，已确认卡片丢了连「查看电子回单」入口都没了。
  */
-export async function fetchPendingTransfers(basePath: string, memoryId: string): Promise<PendingTransfer[]> {
+export async function fetchTransferOrders(basePath: string, memoryId: string): Promise<TransferOrderView[]> {
   const resp = await apiFetch(
-    `${basePath}/api/transfer/pending?memoryId=${encodeURIComponent(memoryId)}`)
+    `${basePath}/api/transfer/orders?memoryId=${encodeURIComponent(memoryId)}`)
   if (!resp.ok) {
     throw new Error(await describeFailure(resp))
   }
-  return await resp.json() as PendingTransfer[]
+  return await resp.json() as TransferOrderView[]
 }
 
 /** 电子回单（仅 EXECUTED 且已生成回单号的确认单存在；后端 404 表示转账未执行） */

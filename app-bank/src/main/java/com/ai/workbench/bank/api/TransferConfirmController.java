@@ -47,23 +47,24 @@ public class TransferConfirmController {
     }
 
     /**
-     * 本会话仍在有效期内的待确认单（前端刷新/切会话后重建卡片用）。
-     * 卡片原本只随 SSE 流结束推一次，页面刷新后就失联了——恢复入口必须存在。
+     * 本会话交易单（前端刷新/切会话后重建卡片用）：未过期的待确认单 + 最近 5 笔已执行单。
+     * 卡片原本只随 SSE 流结束推一次，页面刷新后就失联了——待确认的卡片丢了没法确认，
+     * 已确认的卡片丢了连「查看电子回单」入口都没了，恢复入口必须覆盖两种状态。
      */
-    @GetMapping("/pending")
-    public List<TransferService.PendingOrderView> pending(
+    @GetMapping("/orders")
+    public List<TransferService.OrderView> orders(
             @RequestParam("memoryId") String memoryId, HttpServletRequest http) {
         // 与 confirm 同样的归属校验；AuthInterceptor 也会对 memoryId 查询参数做一遍，这里兜底
         AuthPrincipal principal = (AuthPrincipal) http.getAttribute(AuthInterceptor.ATTR_PRINCIPAL);
         if (principal != null && !AuthInterceptor.memoryIdBelongsTo(principal.identityId(), memoryId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权查看其他身份的转账确认单");
         }
-        return transferService.listPending(memoryId);
+        return transferService.listOrders(memoryId);
     }
 
     /**
      * 电子回单：本会话某张已执行确认单的回单数据（前端「查看电子回单」弹窗用）。
-     * 归属校验与 /pending 相同：回单虽是只读凭证，也不能让别的会话凭确认码查到。
+     * 归属校验与 /orders 相同：回单虽是只读凭证，也不能让别的会话凭确认码查到。
      */
     @GetMapping("/receipt")
     public TransferService.ReceiptView receipt(

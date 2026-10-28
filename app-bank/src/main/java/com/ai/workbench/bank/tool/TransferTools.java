@@ -51,6 +51,16 @@ public class TransferTools {
         }
     }
 
+    @Tool("查询当前客户最近转账成功的收款人名单。"
+            + "用户说「给李四转点」「转给上次那个人」等含糊指代，或想从常用收款人里挑选时，先调用此工具对上具体收款人")
+    public String queryRecentPayees() {
+        try {
+            return transferService.describeRecentPayees(ToolCallContext.currentMemoryId());
+        } catch (Exception e) {
+            return "查询最近收款人异常，请稍后重试。";
+        }
+    }
+
     @Tool("从当前登录客户的账户向他人转账。会先生成一张待确认的转账单，等待用户在确认卡片上操作后才执行")
     public String transfer(
             @P("收款账号或户名") String toAccountOrOwner,

@@ -79,7 +79,8 @@ class BankToolProviderTest {
         void retailSeesCustomerTools() {
             assertThat(toolNamesFor(MEM_RETAIL))
                     .containsExactlyInAnyOrder("listAccounts", "queryAccount", "transfer",
-                            "queryTransferOrder", "queryTransferLimit", "queryReceipt", "searchKnowledge")
+                            "queryTransferOrder", "queryTransferLimit", "queryReceipt",
+                            "queryRecentPayees", "searchKnowledge")
                     .doesNotContain("bankOverview");
         }
 
@@ -88,7 +89,8 @@ class BankToolProviderTest {
         void staffHasNoMoneyTools() {
             assertThat(toolNamesFor(MEM_STAFF))
                     .containsExactlyInAnyOrder("listAccounts", "queryAccount", "bankOverview", "searchKnowledge")
-                    .doesNotContain("transfer", "queryTransferOrder", "queryTransferLimit", "queryReceipt");
+                    .doesNotContain("transfer", "queryTransferOrder", "queryTransferLimit",
+                            "queryReceipt", "queryRecentPayees");
         }
 
         @Test
@@ -96,7 +98,8 @@ class BankToolProviderTest {
         void corporateSeesCustomerTools() {
             assertThat(toolNamesFor(MEM_CORPORATE))
                     .containsExactlyInAnyOrder("listAccounts", "queryAccount", "transfer",
-                            "queryTransferOrder", "queryTransferLimit", "queryReceipt", "searchKnowledge")
+                            "queryTransferOrder", "queryTransferLimit", "queryReceipt",
+                            "queryRecentPayees", "searchKnowledge")
                     .doesNotContain("bankOverview");
         }
 

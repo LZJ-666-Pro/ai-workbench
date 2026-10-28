@@ -3,6 +3,7 @@ package com.ai.workbench.bank.service;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -84,11 +85,17 @@ public class TransferService {
     }
 
     /**
-     * 恢复卡片用的待确认单视图：比 PendingOrder 多 expiresAt（有效期截止的 epoch 毫秒），
-     * 前端据此渲染倒计时——过期单不返回，与 confirm 接口的过期判定口径一致。
+     * 会话交易单视图（前端恢复卡片用）：PENDING 单带 expiresAt 渲染倒计时，
+     * EXECUTED 单带 bankRef/executedAt 支撑「查看电子回单」入口。
      */
-    public record PendingOrderView(String confirmId, String fromAccount, String toAccount,
-                                   String toOwner, BigDecimal amount, String reason, long expiresAt) {
+    public record OrderView(String confirmId, String fromAccount, String toAccount,
+                            String toOwner, BigDecimal amount, String reason,
+                            String status, String bankRef, Long executedAt, Long expiresAt) {
+
+    }
+
+    /** 最近收款人视图（queryRecentPayees 工具用） */
+    public record PayeeView(String toAccount, String toOwner) {
 
     }
 
@@ -162,28 +169,81 @@ public class TransferService {
     }
 
     /**
-     * 恢复卡片的数据源：本会话仍在有效期内的待确认单。
+     * 恢复卡片的数据源：本会话未过期的 PENDING 单 + 最近 5 笔 EXECUTED 单。
+     *
      * 卡片原本只随 SSE 流推一次，页面刷新/切换会话/流被中止后就「断线失联」——
-     * 用户拿着模型"确认单已创建"的回复却找不到卡片可点。前端加载会话时调
-     * GET /api/transfer/pending 用本方法重建卡片。过期单不再返回：与 confirm
-     * 的过期判定同一口径，避免恢复出一张点了必被拒的死卡。
+     * 待确认的卡片丢了点不了，已确认的卡片丢了连「查看电子回单」入口都没了，
+     * 用户拿着模型"转账成功"的回复找不到凭证。前端加载会话时调
+     * GET /api/transfer/orders 用本方法重建两种卡片。PENDING 过期单与 confirm
+     * 的过期判定同一口径（不返回死卡）；已取消/被拒的单没有可恢复的交互，不返回。
      */
-    public List<PendingOrderView> listPending(String memoryId) {
+    public List<OrderView> listOrders(String memoryId) {
         Timestamp cutoff = new Timestamp(System.currentTimeMillis() - confirmTtlMinutes * 60000);
-        return jdbc.query("""
+        List<OrderView> orders = new ArrayList<>(jdbc.query("""
                 SELECT confirm_id, from_account, to_account, amount, reason, created_at
                 FROM bank_transfer_order
                 WHERE memory_id = ? AND status = 'PENDING' AND created_at > ?
                 ORDER BY id ASC LIMIT 10
-                """, (rs, i) -> new PendingOrderView(
+                """, (rs, i) -> new OrderView(
                         rs.getString("confirm_id"),
                         rs.getString("from_account"),
                         rs.getString("to_account"),
                         ownerOf(rs.getString("to_account")),
                         rs.getBigDecimal("amount"),
                         rs.getString("reason"),
+                        "PENDING", null, null,
                         rs.getTimestamp("created_at").getTime() + confirmTtlMinutes * 60000),
-                memoryId, cutoff);
+                memoryId, cutoff));
+        orders.addAll(jdbc.query("""
+                SELECT confirm_id, from_account, to_account, amount, reason, bank_ref, executed_at
+                FROM bank_transfer_order
+                WHERE memory_id = ? AND status = 'EXECUTED'
+                ORDER BY id DESC LIMIT 5
+                """, (rs, i) -> new OrderView(
+                        rs.getString("confirm_id"),
+                        rs.getString("from_account"),
+                        rs.getString("to_account"),
+                        ownerOf(rs.getString("to_account")),
+                        rs.getBigDecimal("amount"),
+                        rs.getString("reason"),
+                        "EXECUTED",
+                        rs.getString("bank_ref"),
+                        rs.getTimestamp("executed_at") == null ? null : rs.getTimestamp("executed_at").getTime(),
+                        null),
+                memoryId));
+        return orders;
+    }
+
+    /**
+     * 供 queryRecentPayees 工具：本会话最近转账成功的收款人（按最近成功时间排序，至多 5 个）。
+     * 有了这份名单，用户说「给李四转点」时模型能主动对上具体收款人；
+     * 只统计 EXECUTED——取消/被拒的收款方不一定是用户真实想转的对象。
+     * 与回单查询一样限本会话：会话记忆隔离是既有设计，跨会话历史是另一个话题。
+     */
+    public String describeRecentPayees(String memoryId) {
+        BankIdentity identity = BankIdentity.fromMemoryId(memoryId);
+        if (!identity.canTransfer()) {
+            return "内部员工账号没有资金操作权限，无法查看转账收款人。";
+        }
+        List<PayeeView> payees = jdbc.query("""
+                SELECT to_account
+                FROM bank_transfer_order
+                WHERE memory_id = ? AND status = 'EXECUTED'
+                GROUP BY to_account
+                ORDER BY MAX(id) DESC
+                LIMIT 5
+                """, (rs, i) -> new PayeeView(rs.getString("to_account"),
+                        ownerOf(rs.getString("to_account"))),
+                memoryId);
+        audit.record(memoryId, "queryRecentPayees", "命中 " + payees.size() + " 个收款人", "SUCCESS");
+        if (payees.isEmpty()) {
+            return "本会话还没有转账成功的记录，暂无最近收款人。";
+        }
+        StringBuilder text = new StringBuilder("最近收款人：");
+        for (PayeeView payee : payees) {
+            text.append("\n- ").append(payee.toOwner()).append("（").append(payee.toAccount()).append("）");
+        }
+        return text.toString();
     }
 
     /**

@@ -67,6 +67,7 @@ public class BankAgentConfig {
             查询确认单真实状态（queryTransferOrder）、
             查询转账限额与今日剩余额度（queryTransferLimit，限额问题必须调用它，不要凭记忆回答）、
             查询已执行转账的电子回单（queryReceipt，不传确认码返回最近回单列表）、
+            查询最近收款人（queryRecentPayees，用户说「给上次那个人转」这类含糊指代时先调用它）、
             检索业务制度知识库（searchKnowledge，制度/费率/流程类咨询先查它）。
             你只能操作张三本人的账户：查询或转出其他客户的账户都会被拒绝，请提前说明。
             """ + COMMON_RULES;
@@ -90,6 +91,7 @@ public class BankAgentConfig {
             查询确认单真实状态（queryTransferOrder）、
             查询转账限额与今日剩余额度（queryTransferLimit，限额问题必须调用它，不要凭记忆回答）、
             查询已执行转账的电子回单（queryReceipt，不传确认码返回最近回单列表）、
+            查询最近收款人（queryRecentPayees，对公付款常说「转给上次那家供应商」，先调用它对上具体收款方）、
             检索业务制度知识库（searchKnowledge，制度/费率/流程类咨询先查它）。
             你只能操作本企业账户（8 开头对公账号）：查询或转出其他企业的账户都会被拒绝，请提前说明。
             对公转账建议引导用户填写转账附言（如合同号、货款用途）。

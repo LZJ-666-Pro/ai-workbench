@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions, listIdentities, getIdentity, setIdentity, fetchPendingTransfers, fetchTransferReceipt } from '../api/chat'
+import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions, listIdentities, getIdentity, setIdentity, fetchTransferOrders, fetchTransferReceipt } from '../api/chat'
 import type { ConfirmRequestData, IdentityInfo, TransferReceipt } from '../api/chat'
 
 export interface Suggestion {
@@ -382,19 +382,31 @@ async function send() {
   }
 }
 
-/** 会话加载后恢复仍在有效期内的待确认卡片：刷新/切会话/流中断后不再「断线失联」 */
+/** 会话加载后恢复交易卡片：PENDING 重建待确认卡，EXECUTED 重建已确认卡（带回单入口）。
+ *  刷新/切会话/流中断后不再「断线失联」——待确认的丢了没法确认，
+ *  已确认的丢了连「查看电子回单」凭证入口都没了 */
 async function restorePendingCards() {
   if (props.agent !== 'bank') return
   try {
-    const pending = await fetchPendingTransfers(props.basePath, memoryId)
-    if (!pending.length) return
+    const orders = await fetchTransferOrders(props.basePath, memoryId)
+    if (!orders.length) return
     // 只补界面里没有的：本轮流式已推过的确认码跳过，避免同一张单出现两张卡
     const known = new Set(
       messages.value.filter(m => m.kind === 'card' && m.card).map(m => m.card!.confirmId))
     let added = false
-    for (const p of pending) {
-      if (known.has(p.confirmId)) continue
-      messages.value.push({ role: 'assistant', kind: 'card', content: '', card: { ...p, status: 'pending' } })
+    for (const o of orders) {
+      if (known.has(o.confirmId)) continue
+      const status = o.status === 'EXECUTED' ? 'confirmed' : 'pending'
+      // 逐字段构造而非展开：后端 EXECUTED 单的 expiresAt/bankRef 为 null，
+      // 直接展开会把 null 塞进 expiresAt 让 cardExpired 的 undefined 判断失效
+      messages.value.push({
+        role: 'assistant', kind: 'card', content: '',
+        card: {
+          confirmId: o.confirmId, fromAccount: o.fromAccount, toAccount: o.toAccount,
+          toOwner: o.toOwner, amount: o.amount, reason: o.reason,
+          status, expiresAt: o.expiresAt ?? undefined,
+        },
+      })
       added = true
     }
     if (added) scrollBottom()

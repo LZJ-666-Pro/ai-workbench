@@ -463,33 +463,75 @@ class TransferServiceIT {
     }
 
     @Nested
-    @DisplayName("待确认单恢复：前端刷新/切会话后重建卡片的数据源")
-    class ListPending {
+    @DisplayName("交易单恢复：前端刷新/切会话后重建卡片的数据源（PENDING + EXECUTED）")
+    class ListOrders {
 
         @Test
-        @DisplayName("只返回本会话未过期的 PENDING 单，并带过期时间戳")
+        @DisplayName("PENDING：只返回本会话未过期单，并带过期时间戳")
         void returnsOnlyUnexpiredPendingOfSession() {
             String keep = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "100.00");
             String expired = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
             BankTestDb.backdateOrder(expired, 11);
             createOrder(BankTestDb.MEM_CORPORATE, BankTestDb.ACC_PAYEE, "300.00");
-            String executed = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "400.00");
-            service.confirmOrder(BankTestDb.MEM_RETAIL, executed, true);
 
-            List<TransferService.PendingOrderView> pending = service.listPending(BankTestDb.MEM_RETAIL);
+            List<TransferService.OrderView> orders = service.listOrders(BankTestDb.MEM_RETAIL);
 
-            assertThat(pending).as("过期/已执行/他人会话的单都不出现")
-                    .extracting(TransferService.PendingOrderView::confirmId)
+            assertThat(orders).as("过期/他人会话的单不出现，EXECUTED 单在下一个用例单测")
+                    .extracting(TransferService.OrderView::confirmId)
                     .containsExactly(keep);
-            assertThat(pending.get(0).expiresAt()).isGreaterThan(System.currentTimeMillis());
-            assertThat(pending.get(0).toOwner()).isEqualTo("测试收款人");
-            assertThat(pending.get(0).toAccount()).isEqualTo(BankTestDb.ACC_PAYEE);
+            assertThat(orders.get(0).status()).isEqualTo("PENDING");
+            assertThat(orders.get(0).expiresAt()).isGreaterThan(System.currentTimeMillis());
+            assertThat(orders.get(0).toOwner()).isEqualTo("测试收款人");
+            assertThat(orders.get(0).toAccount()).isEqualTo(BankTestDb.ACC_PAYEE);
         }
 
         @Test
-        @DisplayName("会话没有待确认单：返回空列表而不是异常")
+        @DisplayName("EXECUTED：已执行单也恢复——confirmed 卡片与「查看电子回单」入口刷新后不能丢")
+        void returnsExecutedOrdersWithBankRef() {
+            String executed = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "400.00");
+            service.confirmOrder(BankTestDb.MEM_RETAIL, executed, true);
+
+            List<TransferService.OrderView> orders = service.listOrders(BankTestDb.MEM_RETAIL);
+
+            assertThat(orders).extracting(TransferService.OrderView::confirmId).containsExactly(executed);
+            TransferService.OrderView view = orders.get(0);
+            assertThat(view.status()).isEqualTo("EXECUTED");
+            assertThat(view.bankRef()).as("回单号随恢复接口带回，前端弹窗免二次查询").isNotBlank();
+            assertThat(view.executedAt()).isNotNull();
+            assertThat(view.expiresAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("会话没有任何单：返回空列表而不是异常")
         void returnsEmptyWhenNothingPending() {
-            assertThat(service.listPending(BankTestDb.MEM_RETAIL)).isEmpty();
+            assertThat(service.listOrders(BankTestDb.MEM_RETAIL)).isEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName("最近收款人：含糊指代（「给上次那个人转」）的落地依据")
+    class RecentPayees {
+
+        @Test
+        @DisplayName("按最近成功时间倒序返回去重后的收款人，上限 5 个")
+        void returnsDistinctPayeesByRecency() {
+            service.confirmOrder(BankTestDb.MEM_RETAIL,
+                    createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "100.00"), true);
+            service.confirmOrder(BankTestDb.MEM_RETAIL,
+                    createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "100.00"), true);
+
+            String text = service.describeRecentPayees(BankTestDb.MEM_RETAIL);
+
+            assertThat(text).contains("最近收款人").contains("测试收款人").contains(BankTestDb.ACC_PAYEE);
+            assertThat(text).as("同一收款人多笔只出现一次")
+                    .matches(s -> s.split(BankTestDb.ACC_PAYEE).length == 2);
+        }
+
+        @Test
+        @DisplayName("没有成功转账时如实说明，员工身份被拒")
+        void emptyAndStaffDenied() {
+            assertThat(service.describeRecentPayees(BankTestDb.MEM_RETAIL)).contains("暂无最近收款人");
+            assertThat(service.describeRecentPayees(BankTestDb.MEM_STAFF)).contains("没有资金操作权限");
         }
     }
 
