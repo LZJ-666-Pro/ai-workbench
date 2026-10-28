@@ -54,6 +54,9 @@ ai:
 bank:
   # 演示登录态：当前客户账户号（Phase 2 接入登录后改为从会话中取）
   current-account-no: "62220001"
+  # 转账确认卡片二次验证的支付密码（演示桩）：固定值便于演示与联调，
+  # 生产环境应替换为密码卡片/短信动态码等真实第二因子
+  pay-password: "123456"
   # 转账风控参数：调整限额/黑名单改这里即可（默认值见 TransferRiskProperties，不写这组时行为不变）
   risk:
     retail-single-limit: 5000.00

@@ -20,7 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 转账确认接口：资金变动的唯一入口。前端确认卡片调用；
- * 幂等、过期、规则复检都在 TransferService.confirmOrder 的事务里。
+ * 支付密码校验（含试错锁定）、幂等、过期、规则复检都在 TransferService 的事务里。
  *
  * 资金结果的指标埋在这里而不是 Service 里：Service 的方法整体在一个事务中，
  * 在事务提交前打点，一旦提交失败就会出现「指标说成功、钱没动」的假信号。
@@ -38,7 +38,7 @@ public class TransferConfirmController {
         this.meterRegistry = meterRegistry;
     }
 
-    public record ConfirmRequest(String memoryId, String confirmId, String action) {
+    public record ConfirmRequest(String memoryId, String confirmId, String action, String payPassword) {
 
     }
 
@@ -61,6 +61,23 @@ public class TransferConfirmController {
         return transferService.listPending(memoryId);
     }
 
+    /**
+     * 电子回单：本会话某张已执行确认单的回单数据（前端「查看电子回单」弹窗用）。
+     * 归属校验与 /pending 相同：回单虽是只读凭证，也不能让别的会话凭确认码查到。
+     */
+    @GetMapping("/receipt")
+    public TransferService.ReceiptView receipt(
+            @RequestParam("memoryId") String memoryId,
+            @RequestParam("confirmId") String confirmId,
+            HttpServletRequest http) {
+        AuthPrincipal principal = (AuthPrincipal) http.getAttribute(AuthInterceptor.ATTR_PRINCIPAL);
+        if (principal != null && !AuthInterceptor.memoryIdBelongsTo(principal.identityId(), memoryId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权查看其他身份的转账回单");
+        }
+        return transferService.receipt(memoryId, confirmId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "回单不存在或转账未执行"));
+    }
+
     @PostMapping("/confirm")
     public ConfirmResponse confirm(@RequestBody ConfirmRequest request, HttpServletRequest http) {
         // memoryId 在请求体里，拦截器看不到，因此这里必须自己把归属校验做完整：
@@ -74,11 +91,23 @@ public class TransferConfirmController {
         if (principal != null && !AuthInterceptor.memoryIdBelongsTo(principal.identityId(), memoryId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权操作其他身份的转账确认单");
         }
+        boolean confirming = "confirm".equals(request.action());
+        // 二次验证：执行（确认）需要支付密码，取消不涉及资金所以不需要。
+        // 校验逻辑（含试错锁定与作废）在 TransferService.verifyPayPassword 的事务里。
+        if (confirming) {
+            TransferService.PasswordVerification check = transferService.verifyPayPassword(
+                    memoryId, request.confirmId(), request.payPassword());
+            if (!check.passed()) {
+                // 密码拒绝单独打点：风控拒绝率看 DENY，密码爆破尝试看这张计数
+                meterRegistry.counter("bank.transfer.confirm", "result", "PWD_DENY").increment();
+                return new ConfirmResponse(false, check.message());
+            }
+        }
         // 真正的越权防线在 TransferService.confirmOrder：它按 confirm_id + memory_id 双条件查单，
         // 拿到别人的确认码也只会得到「确认单不存在」。
         long startNanos = System.nanoTime();
         TransferResult result = transferService.confirmOrder(
-                memoryId, request.confirmId(), "confirm".equals(request.action()));
+                memoryId, request.confirmId(), confirming);
         // result 被拒绝（DENY/FAIL）是业务正常路径而非异常，因此不用错误计数器，
         // 而是按 kind 打标签：风控拒绝率是否异常，看这张按 result 拆分的计数就够了
         meterRegistry.counter("bank.transfer.confirm", "result", result.kind()).increment();

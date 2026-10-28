@@ -2,6 +2,7 @@ package com.ai.workbench.bank.service;
 
 import java.math.BigDecimal;
 import java.sql.Timestamp;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -31,6 +32,17 @@ public class TransferService {
     /** 确认单有效期（分钟），超时确认会被拒绝并标记 REJECTED */
     @Value("${bank.transfer-confirm-ttl-minutes:10}")
     private long confirmTtlMinutes;
+
+    /**
+     * 支付密码（演示桩）：确认转账时的二次验证因子，生产应换成密码卡片/短信动态码。
+     * 密码校验放在 Service 而不是控制器：试错计数与作废要和确认单状态在同一个事务里推进，
+     * 控制器没有事务上下文，做不了「第 3 次错误 → 单子作废」的原子推进。
+     */
+    @Value("${bank.pay-password:123456}")
+    private String payPassword;
+
+    /** 同一确认单支付密码最大试错次数，超过即作废（堵暴力枚举） */
+    private static final int MAX_PWD_ATTEMPTS = 3;
 
     private final JdbcTemplate jdbc;
     private final ToolAuditLogger audit;
@@ -193,6 +205,63 @@ public class TransferService {
                 .formatted(identity.role(), limits.maxSingle(), limits.maxDaily(), today, remaining);
     }
 
+    /** 支付密码校验结果：passed=false 时 message 直接面向用户（前端原样展示） */
+    public record PasswordVerification(boolean passed, String message) {
+
+    }
+
+    /**
+     * 用户确认路径的支付密码校验（管理端审批不走这里——内部操作不需要第二因子）。
+     *
+     * 试错锁定：同一确认单连续错 MAX_PWD_ATTEMPTS 次即作废（CAS 推到 REJECTED）。
+     * 不锁的话，6 位数字密码最坏一百万次尝试总能命中，二次验证形同虚设。
+     * 计数递增、作废与状态判断在同一个 READ_COMMITTED 事务里，并发输错不会漏计；
+     * 校验通过即清零历史计数——「输对一次」就该重新起算，避免历史误伤。
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public PasswordVerification verifyPayPassword(String memoryId, String confirmId, String given) {
+        String attempt = given == null ? "" : given.trim();
+        if (attempt.isEmpty()) {
+            return new PasswordVerification(false, "请输入支付密码后再确认转账。");
+        }
+        Optional<OrderRow> found = jdbc.query("""
+                SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
+                FROM bank_transfer_order WHERE confirm_id = ? AND memory_id = ?
+                """, rowMapper(), confirmId, memoryId).stream().findFirst();
+        if (found.isEmpty()) {
+            // 与 confirmOrder 同一口径：不区分「不存在」与「不是你的」，不向试探者泄露信息
+            return new PasswordVerification(false, "确认单不存在或已处理。");
+        }
+        OrderRow order = found.get();
+        if (!"PENDING".equals(order.status())) {
+            return new PasswordVerification(false, "该确认单已处理过，无需再次确认。");
+        }
+        if (payPassword.equals(attempt)) {
+            jdbc.update("UPDATE bank_transfer_order SET pwd_fail_count = 0 WHERE id = ?", order.id());
+            return new PasswordVerification(true, "支付密码校验通过。");
+        }
+        jdbc.update("UPDATE bank_transfer_order SET pwd_fail_count = pwd_fail_count + 1 WHERE id = ?",
+                order.id());
+        int failCount = jdbc.queryForObject(
+                "SELECT pwd_fail_count FROM bank_transfer_order WHERE id = ?", Integer.class, order.id());
+        if (failCount >= MAX_PWD_ATTEMPTS) {
+            // CAS 作废：只有还挂在 PENDING 上的单子会被推到 REJECTED。
+            // 若作废失败说明恰好被并发确认了——下次 confirmOrder 的幂等检查会兜住
+            int voided = jdbc.update(
+                    "UPDATE bank_transfer_order SET status = 'REJECTED' WHERE id = ? AND status = 'PENDING'",
+                    order.id());
+            if (voided > 0) {
+                audit.record(memoryId, "transfer.confirm",
+                        "支付密码连续错误 %d 次，确认单 %s 已作废".formatted(MAX_PWD_ATTEMPTS, confirmId), "DENY");
+                return new PasswordVerification(false, "支付密码错误次数过多，确认单已作废。请重新发起转账。");
+            }
+        }
+        audit.record(memoryId, "transfer.confirm",
+                "支付密码错误（%d/%d）确认单 %s".formatted(failCount, MAX_PWD_ATTEMPTS, confirmId), "DENY");
+        return new PasswordVerification(false,
+                "支付密码错误，还可尝试 %d 次。".formatted(Math.max(0, MAX_PWD_ATTEMPTS - failCount)));
+    }
+
     /**
      * 第二段：只有确认接口能调。归属校验 → 过期检查 → 账户行锁 → 幂等 CAS → 规则复检 → 划款，同一事务。
      *
@@ -212,7 +281,7 @@ public class TransferService {
             return TransferResult.deny("内部员工账号没有资金操作权限，无法操作转账确认单。");
         }
         Optional<OrderRow> found = jdbc.query("""
-                SELECT id, confirm_id, from_account, to_account, amount, reason, status, created_at
+                SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
                 FROM bank_transfer_order WHERE confirm_id = ? AND memory_id = ?
                 """, rowMapper(), confirmId, memoryId).stream().findFirst();
         if (found.isEmpty()) {
@@ -255,13 +324,22 @@ public class TransferService {
             return TransferResult.fail("付款账户不存在，转账未执行。");
         }
 
-        // 幂等核心：状态机 CAS。并发/重复点击下只有一个请求能把 PENDING 推进到 EXECUTED
+        // 幂等核心：状态机 CAS。并发/重复点击下只有一个请求能把 PENDING 推进到 EXECUTED。
+        // 回单号与状态在同一条 UPDATE 里生成：回单是资金变动的凭证，状态没到 EXECUTED
+        // 就绝不能存在 bank_ref，否则会出现「单子还没执行却查得到回单」的假凭证。
         int claimed = jdbc.update(
-                "UPDATE bank_transfer_order SET status = 'EXECUTED' WHERE id = ? AND status = 'PENDING'",
-                order.id());
+                "UPDATE bank_transfer_order SET status = 'EXECUTED', bank_ref = ? WHERE id = ? AND status = 'PENDING'",
+                newBankRef(), order.id());
         if (claimed == 0) {
             audit.record(memoryId, "transfer.confirm", "重复提交确认单 " + confirmId, "IDEMPOTENT_SKIP");
-            return TransferResult.pending("该确认单已执行过，本次重复操作被幂等拦截，资金未变动。");
+            // 幂等消息按实际终态区分：把「密码试错作废」说成「已执行过」会误导用户
+            return switch (order.status()) {
+                case "REJECTED" -> TransferResult.deny(
+                        "该确认单已作废（支付密码错误次数过多或已过期），资金未变动，请重新发起转账。");
+                case "CANCELLED" -> TransferResult.pending("该确认单已取消，资金未变动。");
+                case "EXECUTED" -> TransferResult.pending("该确认单已执行过，本次重复操作被幂等拦截，资金未变动。");
+                default -> TransferResult.pending("该确认单已处理过（状态 %s），资金未变动。".formatted(order.status()));
+            };
         }
 
         // 规则复检：卡片展示期间余额/日累计可能已被其他交易改变（限额按会话身份分档）
@@ -322,11 +400,11 @@ public class TransferService {
                 && !"null".equalsIgnoreCase(confirmId.trim()) && !"-".equals(confirmId.trim());
         List<OrderRow> rows = byId
                 ? jdbc.query("""
-                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, created_at
+                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
                         FROM bank_transfer_order WHERE confirm_id = ? AND memory_id = ?
                         """, rowMapper(), confirmId.trim(), memoryId)
                 : jdbc.query("""
-                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, created_at
+                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
                         FROM bank_transfer_order WHERE memory_id = ? ORDER BY id DESC LIMIT 1
                         """, rowMapper(), memoryId);
         if (rows.isEmpty()) {
@@ -348,12 +426,92 @@ public class TransferService {
             case "PENDING" -> summary + "（待确认，请在页面的确认卡片上操作，有效期还剩约 "
                     + Math.max(0, confirmTtlMinutes - ageMinutes) + " 分钟）";
             case "EXPIRED" -> summary + "（已过期无法确认，请让用户重新发起转账，你将创建新的确认单）";
-            case "EXECUTED" -> summary + "（已执行成功，资金已划转）";
+            case "EXECUTED" -> summary + "（已执行成功，资金已划转，银行回单号 "
+                    + order.bankRef() + "，用户要凭证时引导其点确认卡片上的「查看电子回单」）";
             case "CANCELLED" -> summary + "（已取消，需要时请重新发起转账）";
             case "REJECTED" -> summary + "（已被拒绝或风控拦截，请重新发起）";
             default -> summary;
         };
     }
+
+    /**
+     * 供 queryReceipt 工具：电子回单查询。
+     * 传了确认码查单笔回单详情；不传则列出本会话最近已执行的回单。
+     * 只在 EXECUTED 且已生成回单号的单子上返回——回单是资金凭证，未执行的单据不存在回单。
+     */
+    public String describeReceipts(String memoryId, String confirmId) {
+        boolean byId = confirmId != null && !confirmId.isBlank()
+                && !"null".equalsIgnoreCase(confirmId.trim()) && !"-".equals(confirmId.trim());
+        List<OrderRow> rows = byId
+                ? jdbc.query("""
+                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
+                        FROM bank_transfer_order
+                        WHERE confirm_id = ? AND memory_id = ? AND status = 'EXECUTED' AND bank_ref IS NOT NULL
+                        """, rowMapper(), confirmId.trim(), memoryId)
+                : jdbc.query("""
+                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
+                        FROM bank_transfer_order
+                        WHERE memory_id = ? AND status = 'EXECUTED' AND bank_ref IS NOT NULL
+                        ORDER BY id DESC LIMIT 5
+                        """, rowMapper(), memoryId);
+        if (rows.isEmpty()) {
+            return byId
+                    ? "没有找到该确认单对应的电子回单（可能尚未执行成功或确认码有误）。"
+                    : "本会话还没有已执行的转账，因此暂无电子回单。";
+        }
+        audit.record(memoryId, "queryReceipt",
+                (byId ? "查询回单 " + confirmId : "查询最近回单列表") + "，命中 " + rows.size() + " 笔", "SUCCESS");
+        StringBuilder text = new StringBuilder(byId ? "电子回单：" : "最近的电子回单：\n");
+        for (OrderRow order : rows) {
+            text.append("\n回单号 %s：%s → %s，金额 %.2f 元%s，交易时间 %tF %<tR。"
+                    .formatted(order.bankRef(), order.fromAccount(), order.toAccount(), order.amount(),
+                            note(order.reason), order.executedAt()));
+        }
+        return text + "\n（用户要查看凭证样式时，请引导其点击确认卡片上的「查看电子回单」按钮）";
+    }
+
+    /** 电子回单视图（前端弹窗渲染用）；仅 EXECUTED 且已生成回单号的单子存在 */
+    public record ReceiptView(String confirmId, String bankRef, String fromAccount, String fromOwner,
+                              String toAccount, String toOwner, BigDecimal amount, String reason,
+                              String executedAt) {
+
+    }
+
+    /** 查询本会话某张确认单的电子回单；不存在 / 未执行时返回 empty（控制器转 404） */
+    public Optional<ReceiptView> receipt(String memoryId, String confirmId) {
+        if (confirmId == null || confirmId.isBlank()) {
+            return Optional.empty();
+        }
+        List<ReceiptView> rows = jdbc.query("""
+                SELECT confirm_id, bank_ref, from_account, to_account, amount, reason, executed_at
+                FROM bank_transfer_order
+                WHERE confirm_id = ? AND memory_id = ? AND status = 'EXECUTED' AND bank_ref IS NOT NULL
+                """, (rs, i) -> new ReceiptView(
+                        rs.getString("confirm_id"),
+                        rs.getString("bank_ref"),
+                        rs.getString("from_account"),
+                        ownerOf(rs.getString("from_account")),
+                        rs.getString("to_account"),
+                        ownerOf(rs.getString("to_account")),
+                        rs.getBigDecimal("amount"),
+                        rs.getString("reason"),
+                        rs.getTimestamp("executed_at").toLocalDateTime().format(RECEIPT_TIME)),
+                confirmId.trim(), memoryId);
+        return rows.stream().findFirst();
+    }
+
+    /** 回单号：EB + 时间戳 + 8 位随机十六进制，长度与真实柜面流水号量级相当 */
+    private String newBankRef() {
+        String ts = java.time.LocalDateTime.now().format(BANK_REF_TIME);
+        String rand = UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase();
+        return "EB" + ts + rand;
+    }
+
+    private static final DateTimeFormatter BANK_REF_TIME =
+            DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+
+    private static final DateTimeFormatter RECEIPT_TIME =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private org.springframework.jdbc.core.RowMapper<OrderRow> rowMapper() {
         return (rs, i) -> new OrderRow(
@@ -364,7 +522,9 @@ public class TransferService {
                 rs.getBigDecimal("amount"),
                 rs.getString("reason"),
                 rs.getString("status"),
-                rs.getTimestamp("created_at"));
+                rs.getString("bank_ref"),
+                rs.getTimestamp("created_at"),
+                rs.getTimestamp("executed_at"));
     }
 
     /**
@@ -458,8 +618,10 @@ public class TransferService {
         return byOwner.isEmpty() ? RecipientLookup.notFound() : RecipientLookup.found(byOwner.get(0));
     }
 
+    /** bankRef / executedAt 仅 EXECUTED 单非空（回单号与状态机 CAS 同一条 UPDATE 写入） */
     private record OrderRow(Long id, String confirmId, String fromAccount, String toAccount,
-                            BigDecimal amount, String reason, String status, Timestamp createdAt) {
+                            BigDecimal amount, String reason, String status, String bankRef,
+                            Timestamp createdAt, Timestamp executedAt) {
 
     }
 }

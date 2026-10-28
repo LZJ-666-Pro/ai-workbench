@@ -50,8 +50,9 @@ class BankToolProviderTest {
     void setUp() {
         bankService = new FakeBankService();
         audit = new FakeAuditLogger();
-        // TransferTools 在本类用例里不会被调用（员工身份下它根本不注册）
-        provider = new BankToolProvider(new AccountTools(bankService, audit), new TransferTools(null));
+        // TransferTools / KnowledgeTools 在本类用例里不会被调用（员工身份下 transfer 根本不注册）
+        provider = new BankToolProvider(new AccountTools(bankService, audit),
+                new TransferTools(null), new KnowledgeTools(null, null, audit));
     }
 
     @AfterEach
@@ -78,7 +79,7 @@ class BankToolProviderTest {
         void retailSeesCustomerTools() {
             assertThat(toolNamesFor(MEM_RETAIL))
                     .containsExactlyInAnyOrder("listAccounts", "queryAccount", "transfer",
-                            "queryTransferOrder", "queryTransferLimit")
+                            "queryTransferOrder", "queryTransferLimit", "queryReceipt", "searchKnowledge")
                     .doesNotContain("bankOverview");
         }
 
@@ -86,8 +87,8 @@ class BankToolProviderTest {
         @DisplayName("内部员工：完全没有资金操作工具（转账工具根本不暴露给模型）")
         void staffHasNoMoneyTools() {
             assertThat(toolNamesFor(MEM_STAFF))
-                    .containsExactlyInAnyOrder("listAccounts", "queryAccount", "bankOverview")
-                    .doesNotContain("transfer", "queryTransferOrder", "queryTransferLimit");
+                    .containsExactlyInAnyOrder("listAccounts", "queryAccount", "bankOverview", "searchKnowledge")
+                    .doesNotContain("transfer", "queryTransferOrder", "queryTransferLimit", "queryReceipt");
         }
 
         @Test
@@ -95,7 +96,7 @@ class BankToolProviderTest {
         void corporateSeesCustomerTools() {
             assertThat(toolNamesFor(MEM_CORPORATE))
                     .containsExactlyInAnyOrder("listAccounts", "queryAccount", "transfer",
-                            "queryTransferOrder", "queryTransferLimit")
+                            "queryTransferOrder", "queryTransferLimit", "queryReceipt", "searchKnowledge")
                     .doesNotContain("bankOverview");
         }
 

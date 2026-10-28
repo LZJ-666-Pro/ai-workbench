@@ -114,6 +114,11 @@ public class ChatStreamController {
         long startNanos = System.nanoTime();
 
         assistant.chat(memoryId, message)
+                // 工具执行前的回调：把工具名推给前端，消除「模型在调工具」这段最长的静默期。
+                // 只报开始不报结束——前端收到第一条 delta 就该清掉状态条，工具结果
+                // 本身会经过模型加工后以正文形式呈现，不需要单独的 tool_end 事件
+                .beforeToolExecution(before -> TraceContext.runWith(traceId, () -> SseSender.send(emitter,
+                        Map.of("type", "tool", "name", before.request().name()))))
                 .onPartialResponse(token -> TraceContext.runWith(traceId, () -> SseSender.send(emitter,
                         Map.of("type", "delta", "content", token == null ? "" : token))))
                 .onCompleteResponse(response -> TraceContext.runWith(traceId, () -> {

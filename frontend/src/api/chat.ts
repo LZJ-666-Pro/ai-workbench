@@ -31,11 +31,13 @@ async function describeFailure(resp: Response): Promise<string> {
 }
 
 export interface ChatEvent {
-  type: 'delta' | 'done' | 'error' | 'confirm_request'
+  type: 'delta' | 'done' | 'error' | 'confirm_request' | 'tool'
   content?: string
   totalTokens?: number
   /** 出错事件附带：用户可凭此编号让运维在日志里定位这一次调用 */
   traceId?: string
+  /** tool 事件附带：模型正在调用的工具名（前端映射成中文状态文案） */
+  name?: string
   confirmId?: string
   fromAccount?: string
   toAccount?: string
@@ -239,17 +241,19 @@ export function readCachedSessions(agent: string): unknown[] {
   }
 }
 
-/** 确认/取消转账卡片。幂等性由后端状态机保证：重复提交只会得到"已处理过"提示 */
+/** 确认/取消转账卡片。幂等性由后端状态机保证：重复提交只会得到"已处理过"提示。
+ *  payPassword 仅确认（执行）时需要——资金变动的二次验证因子（演示桩：固定支付密码）；取消不需要 */
 export async function respondTransferConfirm(
   basePath: string,
   memoryId: string,
   confirmId: string,
   action: 'confirm' | 'cancel',
+  payPassword?: string,
 ): Promise<{ ok: boolean; message: string }> {
   const resp = await apiFetch(`${basePath}/api/transfer/confirm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memoryId, confirmId, action }),
+    body: JSON.stringify({ memoryId, confirmId, action, payPassword }),
   })
   if (!resp.ok) {
     throw new Error(await describeFailure(resp))
@@ -276,6 +280,36 @@ export async function fetchPendingTransfers(basePath: string, memoryId: string):
   return await resp.json() as PendingTransfer[]
 }
 
+/** 电子回单（仅 EXECUTED 且已生成回单号的确认单存在；后端 404 表示转账未执行） */
+export interface TransferReceipt {
+  confirmId: string
+  /** 银行回单号（EB + 时间戳 + 随机段，与状态机 CAS 同事务落库） */
+  bankRef: string
+  fromAccount: string
+  fromOwner: string
+  toAccount: string
+  toOwner: string
+  amount: number
+  reason: string
+  /** 交易时间（后端格式化 yyyy-MM-dd HH:mm:ss） */
+  executedAt: string
+}
+
+/** 查询某张确认单的电子回单（确认卡片「查看电子回单」弹窗数据源） */
+export async function fetchTransferReceipt(
+  basePath: string,
+  memoryId: string,
+  confirmId: string,
+): Promise<TransferReceipt> {
+  const resp = await apiFetch(
+    `${basePath}/api/transfer/receipt?memoryId=${encodeURIComponent(memoryId)}`
+    + `&confirmId=${encodeURIComponent(confirmId)}`)
+  if (!resp.ok) {
+    throw new Error(await describeFailure(resp))
+  }
+  return await resp.json() as TransferReceipt
+}
+
 /** SSE 流式对话客户端：fetch + ReadableStream 手动解析 text/event-stream 帧。
  *
  * 后端事件格式（platform-core ChatStreamController）：
@@ -296,6 +330,8 @@ export async function streamChat(opts: {
   /** traceId 仅在出错时由后端下发，用于把界面上的报错与后端日志对上 */
   onError?: (message: string, traceId?: string) => void
   onConfirmRequest?: (card: ConfirmRequestData) => void
+  /** 模型开始调用工具（工具执行前下发）：前端显示「正在查询…」状态条，消除静默期 */
+  onTool?: (toolName: string) => void
 }): Promise<void> {
   const url = `${opts.basePath}/api/chat/${opts.agent}/stream`
     + `?memoryId=${encodeURIComponent(opts.memoryId)}`
@@ -325,6 +361,8 @@ export async function streamChat(opts: {
       }
       if (evt.type === 'delta') {
         opts.onDelta(evt.content ?? '')
+      } else if (evt.type === 'tool' && evt.name) {
+        opts.onTool?.(evt.name)
       } else if (evt.type === 'done') {
         opts.onDone?.(evt.totalTokens ?? -1)
       } else if (evt.type === 'error') {

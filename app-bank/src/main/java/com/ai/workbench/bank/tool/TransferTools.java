@@ -41,6 +41,16 @@ public class TransferTools {
         }
     }
 
+    @Tool("查询电子回单。转账成功后可查回单凭证；不传确认码时返回本会话最近已执行的转账回单（含银行回单号）")
+    public String queryReceipt(
+            @P(value = "转账确认码（UUID）；不清楚时可传空，将返回最近的电子回单列表", required = false) String confirmId) {
+        try {
+            return transferService.describeReceipts(ToolCallContext.currentMemoryId(), confirmId);
+        } catch (Exception e) {
+            return "查询电子回单异常，请稍后重试。";
+        }
+    }
+
     @Tool("从当前登录客户的账户向他人转账。会先生成一张待确认的转账单，等待用户在确认卡片上操作后才执行")
     public String transfer(
             @P("收款账号或户名") String toAccountOrOwner,

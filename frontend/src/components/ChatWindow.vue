@@ -2,8 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions, listIdentities, getIdentity, setIdentity, fetchPendingTransfers } from '../api/chat'
-import type { ConfirmRequestData, IdentityInfo } from '../api/chat'
+import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions, listIdentities, getIdentity, setIdentity, fetchPendingTransfers, fetchTransferReceipt } from '../api/chat'
+import type { ConfirmRequestData, IdentityInfo, TransferReceipt } from '../api/chat'
 
 export interface Suggestion {
   icon: string
@@ -48,6 +48,10 @@ interface CardMsg extends ConfirmRequestData {
   status: 'pending' | 'processing' | 'confirmed' | 'cancelled'
   /** 有效期截止（epoch 毫秒）：SSE 流里推的卡片没有，恢复接口带回，用于倒计时与过期置灰 */
   expiresAt?: number
+  /** 支付密码输入（仅确认时需要，二次验证因子；演示桩固定 123456） */
+  payPwd?: string
+  /** 支付密码校验的行内错误提示 */
+  payError?: string
 }
 
 interface Msg {
@@ -81,6 +85,26 @@ const pendingDelete = ref<SidebarSession | null>(null)
 // 待确认卡片倒计时的时钟：每秒跳一次，只影响带 expiresAt 的卡片渲染
 const nowTick = ref(Date.now())
 let tickTimer: ReturnType<typeof setInterval> | undefined
+
+// 工具调用状态：SSE tool 事件驱动，第一条 delta 到达即清空。
+// 模型调工具的那几秒是最长的静默期——不显示点什么，用户会以为卡死了
+const toolActivity = ref('')
+
+/** 工具名 → 面向用户的中文文案（不暴露内部实现细节，只说在做什么） */
+const TOOL_LABELS: Record<string, string> = {
+  queryAccount: '正在查询账户信息',
+  listAccounts: '正在查询账户列表',
+  bankOverview: '正在统计全行概况',
+  transfer: '正在创建转账确认单',
+  queryTransferOrder: '正在查询确认单状态',
+  queryTransferLimit: '正在查询转账限额',
+  queryReceipt: '正在查询电子回单',
+  searchKnowledge: '正在检索业务知识库',
+}
+
+function toolLabel(name: string): string {
+  return TOOL_LABELS[name] ?? `正在处理（${name}）`
+}
 
 // 多服务对象：可选身份列表与当前身份（仅 enableIdentity 时使用）
 const identityList = ref<IdentityInfo[]>([])
@@ -320,7 +344,13 @@ async function send() {
       message,
       signal: controller.signal,
       onDelta: (text) => {
+        // 正文开始输出：工具阶段结束，状态让位给流式内容
+        toolActivity.value = ''
         reply.content += text
+        scrollBottom()
+      },
+      onTool: (name) => {
+        toolActivity.value = toolLabel(name)
         scrollBottom()
       },
       onError: (msg, traceId) => {
@@ -341,6 +371,7 @@ async function send() {
   } finally {
     streaming.value = false
     controller = null
+    toolActivity.value = ''
     scrollBottom()
     // 本轮消息写入本地缓存（后端不在线时下次也能看到）
     cacheMessages(props.agent, memoryId, messages.value
@@ -383,23 +414,112 @@ function ttlText(card: CardMsg): string {
   return `剩 ${Math.floor(leftSec / 60)}:${String(leftSec % 60).padStart(2, '0')}`
 }
 
-/** 确认卡片操作：调后端确认接口，结果以普通消息回显 */
+/** 确认卡片操作：调后端确认接口，结果以普通消息回显。
+ *  确认（执行）需要支付密码——资金变动的二次验证因子；取消不涉及资金，无需密码 */
 async function respondCard(card: CardMsg, action: 'confirm' | 'cancel') {
   if (card.status !== 'pending') return
+  card.payError = ''
+  if (action === 'confirm' && !(card.payPwd ?? '').trim()) {
+    card.payError = '请输入支付密码'
+    return
+  }
   card.status = 'processing'
   try {
-    const res = await respondTransferConfirm(props.basePath, memoryId, card.confirmId, action)
-    card.status = action === 'confirm' ? 'confirmed' : 'cancelled'
-    messages.value.push({ role: 'assistant', kind: 'text', content: res.message })
+    const res = await respondTransferConfirm(
+      props.basePath, memoryId, card.confirmId, action, card.payPwd)
+    if (res.ok) {
+      card.status = action === 'confirm' ? 'confirmed' : 'cancelled'
+      messages.value.push({ role: 'assistant', kind: 'text', content: res.message })
+    } else {
+      // ok=false（密码错误 / 已过期 / 风控拦截）：单据回 pending 可重试，
+      // 确认失败的错误挂在密码框下方行内展示，取消失败走消息回显
+      card.status = 'pending'
+      if (action === 'confirm') card.payError = res.message
+      else messages.value.push({ role: 'assistant', kind: 'text', content: res.message })
+    }
   } catch (e) {
     card.status = 'pending'
-    messages.value.push({
-      role: 'assistant',
-      kind: 'text',
-      content: `[确认失败] ${e instanceof Error ? e.message : String(e)}`,
-    })
+    card.payError = e instanceof Error ? e.message : String(e)
   }
   scrollBottom()
+}
+
+// ---------- 电子回单：确认成功后的凭证查看 ----------
+const receipt = ref<TransferReceipt | null>(null)
+const receiptLoading = ref(false)
+const receiptError = ref('')
+
+/** 打开回单弹窗：按确认码实时取后端（后端 404 = 转账未执行，如实报错不造凭证） */
+async function openReceipt(card: CardMsg) {
+  receipt.value = null
+  receiptError.value = ''
+  receiptLoading.value = true
+  try {
+    receipt.value = await fetchTransferReceipt(props.basePath, memoryId, card.confirmId)
+  } catch (e) {
+    receiptError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    receiptLoading.value = false
+  }
+}
+
+function closeReceipt() {
+  receipt.value = null
+  receiptError.value = ''
+}
+
+const RMB_DIGITS = ['零', '壹', '贰', '叁', '肆', '伍', '陆', '柒', '捌', '玖']
+const RMB_SMALL = ['', '拾', '佰', '仟']
+const RMB_BIG = ['', '万', '亿']
+
+/** 金额大写（回单展示用）：逐位转换，节尾挂万/亿；演示金额范围（亿以内）足够 */
+function amountInWords(amount: number): string {
+  const [intStr, decStr] = amount.toFixed(2).split('.')
+  if (Number(intStr) === 0 && Number(decStr) === 0) return '零元整'
+
+  let out = ''
+  let zeroPending = false
+  let pendingBig = false
+  const n = intStr.replace(/^0+(?=\d)/, '')
+  for (let i = 0; i < n.length; i++) {
+    const d = Number(n[i])
+    const pos = n.length - 1 - i
+    const inGroup = pos % 4
+    const group = Math.floor(pos / 4)
+    if (d === 0) {
+      zeroPending = out !== ''
+      // 节尾为 0 但节内有值（如 10005000）：万/亿单位仍要挂上，否则会读成「壹仟零伍仟」
+      if (inGroup === 0 && group > 0 && pendingBig) {
+        out += RMB_BIG[group]
+        pendingBig = false
+        zeroPending = false
+      }
+      continue
+    }
+    if (zeroPending) {
+      out += '零'
+      zeroPending = false
+    }
+    out += RMB_DIGITS[d] + RMB_SMALL[inGroup]
+    if (inGroup === 0 && group > 0) {
+      out += RMB_BIG[group]
+      pendingBig = false
+    } else if (group > 0) {
+      pendingBig = true
+    }
+  }
+
+  const jiao = Number(decStr[0])
+  const fen = Number(decStr[1])
+  let tail = ''
+  if (jiao === 0 && fen === 0) {
+    tail = '整'
+  } else {
+    if (jiao > 0) tail += RMB_DIGITS[jiao] + '角'
+    else if (fen > 0 && out) tail += '零'
+    if (fen > 0) tail += RMB_DIGITS[fen] + '分'
+  }
+  return (out ? out + '元' : '') + tail
 }
 
 function scrollBottom() {
@@ -573,14 +693,34 @@ function formatTime(timestamp: string): string {
                 <div class="card-row"><span class="k">收款人</span><span>{{ m.card.toOwner }}（{{ m.card.toAccount }}）</span></div>
                 <div class="card-row"><span class="k">付款账户</span><span>{{ m.card.fromAccount }}</span></div>
                 <div v-if="m.card.reason" class="card-row"><span class="k">附言</span><span>{{ m.card.reason }}</span></div>
-                <div v-if="m.card.status === 'pending' && !cardExpired(m.card)" class="card-actions">
-                  <button class="primary" @click="respondCard(m.card, 'confirm')">确认转账</button>
-                  <button class="ghost" @click="respondCard(m.card, 'cancel')">取消</button>
-                  <span v-if="ttlText(m.card)" class="card-ttl">{{ ttlText(m.card) }}</span>
+                <div v-if="m.card.status === 'pending' && !cardExpired(m.card)" class="card-actions-wrap">
+                  <!-- 支付密码：资金确认的二次验证因子（演示桩：123456） -->
+                  <div class="card-pay">
+                    <input
+                      v-model="m.card.payPwd"
+                      class="pay-input"
+                      type="password"
+                      inputmode="numeric"
+                      maxlength="6"
+                      placeholder="请输入支付密码"
+                      autocomplete="off"
+                      @keydown.enter.prevent="respondCard(m.card, 'confirm')"
+                    />
+                    <span class="pay-hint">演示支付密码 123456</span>
+                  </div>
+                  <p v-if="m.card.payError" class="pay-error">{{ m.card.payError }}</p>
+                  <div class="card-actions">
+                    <button class="primary" @click="respondCard(m.card, 'confirm')">确认转账</button>
+                    <button class="ghost" @click="respondCard(m.card, 'cancel')">取消</button>
+                    <span v-if="ttlText(m.card)" class="card-ttl">{{ ttlText(m.card) }}</span>
+                  </div>
                 </div>
                 <div v-else-if="m.card.status === 'pending'" class="card-status">⏰ 确认已超时，请重新发起转账</div>
                 <div v-else-if="m.card.status === 'processing'" class="card-status">处理中…</div>
-                <div v-else-if="m.card.status === 'confirmed'" class="card-status ok">✅ 已确认</div>
+                <div v-else-if="m.card.status === 'confirmed'" class="card-status ok">
+                  ✅ 已确认
+                  <button class="receipt-link" @click="openReceipt(m.card)">查看电子回单</button>
+                </div>
                 <div v-else class="card-status">🚫 已取消</div>
               </template>
               <template v-else>
@@ -593,7 +733,7 @@ function formatTime(timestamp: string): string {
                 <template v-else>{{ m.content }}</template>
                 <span
                   v-if="streaming && m.role === 'assistant' && i === messages.length - 1"
-                ><span v-if="!m.content" class="thinking">思考中…</span><span
+                ><span v-if="!m.content" class="thinking">{{ toolActivity ? '🔧 ' + toolActivity + '…' : '思考中…' }}</span><span
                     v-else
                     class="caret"
                   >▍</span></span>
@@ -634,6 +774,40 @@ function formatTime(timestamp: string): string {
         <div class="confirm-actions">
           <button class="confirm-btn ghost" @click="pendingDelete = null">取消</button>
           <button class="confirm-btn danger" @click="removeSession(pendingDelete.memoryId)">删除</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 电子回单弹窗：确认成功后查看交易凭证 -->
+    <div v-if="receipt || receiptError || receiptLoading" class="confirm-mask" @click.self="closeReceipt">
+      <div class="receipt-dialog">
+        <template v-if="receiptLoading">
+          <p class="receipt-status">回单加载中…</p>
+        </template>
+        <template v-else-if="receiptError">
+          <h3 class="confirm-title">电子回单</h3>
+          <p class="receipt-status error">{{ receiptError }}</p>
+        </template>
+        <template v-else-if="receipt">
+          <div class="receipt-head">
+            <span class="receipt-title">电子回单</span>
+            <span class="receipt-stamp">交易成功</span>
+          </div>
+          <div class="receipt-no">回单号 {{ receipt.bankRef }}</div>
+          <div class="receipt-body">
+            <div class="card-row"><span class="k">交易时间</span><span>{{ receipt.executedAt }}</span></div>
+            <div class="card-row"><span class="k">付款户名</span><span>{{ receipt.fromOwner }}</span></div>
+            <div class="card-row"><span class="k">付款账号</span><span class="mono">{{ receipt.fromAccount }}</span></div>
+            <div class="card-row"><span class="k">收款户名</span><span>{{ receipt.toOwner }}</span></div>
+            <div class="card-row"><span class="k">收款账号</span><span class="mono">{{ receipt.toAccount }}</span></div>
+            <div class="card-row"><span class="k">转账金额</span>
+              <span>¥{{ receipt.amount.toFixed(2) }}（{{ amountInWords(receipt.amount) }}）</span></div>
+            <div v-if="receipt.reason" class="card-row"><span class="k">附言</span><span>{{ receipt.reason }}</span></div>
+          </div>
+          <p class="receipt-note">本回单由模拟银行系统生成，仅作演示用途</p>
+        </template>
+        <div class="confirm-actions">
+          <button class="confirm-btn ghost" @click="closeReceipt">关闭</button>
         </div>
       </div>
     </div>
@@ -951,6 +1125,79 @@ function formatTime(timestamp: string): string {
 
 .confirm-btn.danger:hover {
   background: #dc3d43;
+}
+
+/* ===== 电子回单弹窗 ===== */
+.receipt-dialog {
+  width: 380px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+}
+
+.receipt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.receipt-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* 「交易成功」章戳：描边圆角框 + 低饱和绿，不发光不渐变 */
+.receipt-stamp {
+  padding: 2px 10px;
+  border: 1px solid #86c99b;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #16a34a;
+  letter-spacing: 2px;
+}
+
+.receipt-no {
+  margin: 12px 0 4px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+.receipt-body {
+  padding: 4px 0 10px;
+}
+
+.receipt-body .card-row .k {
+  width: 64px;
+}
+
+/* 账号等宽数字，回单的凭证感主要靠它 */
+.receipt-body .mono,
+.receipt-no {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.receipt-status {
+  margin: 8px 0;
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+
+.receipt-status.error {
+  color: #e5484d;
+}
+
+.receipt-note {
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  color: #b3b9c4;
 }
 
 .sidebar-footer {
@@ -1336,6 +1583,61 @@ function formatTime(timestamp: string): string {
   margin-top: 14px;
 }
 
+/* 密码输入与操作按钮的包裹层：密码行内报错时按钮组跟着下移 */
+.card-actions-wrap {
+  margin-top: 14px;
+}
+
+.card-pay {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pay-input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 14px;
+  letter-spacing: 3px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.pay-input:focus {
+  border-color: var(--accent);
+}
+
+.pay-hint {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.pay-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #e5484d;
+}
+
+/* 已确认卡片上的回单入口 */
+.receipt-link {
+  margin-left: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.receipt-link:hover {
+  text-decoration: underline;
+}
+
 .card-actions .primary {
   background: var(--accent);
   color: #fff;
@@ -1651,6 +1953,19 @@ function formatTime(timestamp: string): string {
 .theme-bank .card-actions .primary,
 .theme-bank .card-actions .ghost {
   border-radius: 4px;
+}
+
+/* 银行主题：密码框/回单弹窗跟随方角硬朗感 */
+.theme-bank .pay-input {
+  border-radius: 4px;
+}
+
+.theme-bank .receipt-dialog {
+  border-radius: 8px;
+}
+
+.theme-bank .receipt-stamp {
+  border-color: #4ade80;
 }
 
 .theme-bank .card-actions .primary:hover {

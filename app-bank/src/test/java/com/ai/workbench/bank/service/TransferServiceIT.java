@@ -664,6 +664,140 @@ class TransferServiceIT {
         }
     }
 
+    @Nested
+    @DisplayName("电子回单")
+    class Receipt {
+
+        @Test
+        @DisplayName("执行成功即生成回单号：与状态同事务落库，未执行单没有回单")
+        void receiptRefIsWrittenOnlyOnExecution() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+            assertThat(bankRefOf(confirmId))
+                    .as("PENDING 单不允许有回单号：回单是资金变动的凭证")
+                    .isNull();
+
+            assertThat(service.confirmOrder(BankTestDb.MEM_RETAIL, confirmId, true).kind())
+                    .isEqualTo("SUCCESS");
+
+            assertThat(bankRefOf(confirmId)).startsWith("EB").isNotBlank();
+        }
+
+        @Test
+        @DisplayName("按确认码查回单：归属本会话、金额与时间齐全；别的会话查不到")
+        void receiptIsScopedToItsOwnSession() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+            service.confirmOrder(BankTestDb.MEM_RETAIL, confirmId, true);
+
+            var own = service.receipt(BankTestDb.MEM_RETAIL, confirmId);
+            assertThat(own).isPresent();
+            assertThat(own.get().bankRef()).startsWith("EB");
+            assertThat(own.get().amount()).isEqualByComparingTo("200.00");
+            assertThat(own.get().fromAccount()).isEqualTo(BankTestDb.ACC_RETAIL);
+            assertThat(own.get().toAccount()).isEqualTo(BankTestDb.ACC_PAYEE);
+            assertThat(own.get().executedAt()).isNotBlank();
+
+            // 跨会话拿同一确认码查不到：回单跟着会话走，与确认单归属口径一致
+            assertThat(service.receipt(BankTestDb.MEM_CORPORATE, confirmId)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("未执行的单子没有回单：receipt 返回 empty，describeReceipts 如实说明")
+        void pendingOrderHasNoReceipt() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+
+            assertThat(service.receipt(BankTestDb.MEM_RETAIL, confirmId)).isEmpty();
+            assertThat(service.describeReceipts(BankTestDb.MEM_RETAIL, confirmId))
+                    .contains("没有找到");
+            assertThat(service.describeReceipts(BankTestDb.MEM_RETAIL, null))
+                    .contains("还没有已执行的转账");
+        }
+
+        @Test
+        @DisplayName("回单列表工具口径：确认后不传确认码能列出回单（含回单号）")
+        void listReceiptsAfterExecution() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+            service.confirmOrder(BankTestDb.MEM_RETAIL, confirmId, true);
+
+            String listed = service.describeReceipts(BankTestDb.MEM_RETAIL, null);
+            assertThat(listed).contains("EB").contains("200.00").contains("62220001");
+            assertThat(BankTestDb.auditResults("queryReceipt")).contains("SUCCESS");
+        }
+
+        private String bankRefOf(String confirmId) {
+            return BankTestDb.jdbc().queryForObject(
+                    "SELECT bank_ref FROM bank_transfer_order WHERE confirm_id = ?",
+                    String.class, confirmId);
+        }
+    }
+
+    @Nested
+    @DisplayName("支付密码试错锁定")
+    class PasswordLockout {
+
+        @Test
+        @DisplayName("错 2 次后输对：计数清零，转账正常执行")
+        void correctAfterFailuresResetsCounter() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+            assertThat(service.verifyPayPassword(BankTestDb.MEM_RETAIL, confirmId, "000000").passed()).isFalse();
+            assertThat(service.verifyPayPassword(BankTestDb.MEM_RETAIL, confirmId, "000000").passed()).isFalse();
+
+            assertThat(service.verifyPayPassword(BankTestDb.MEM_RETAIL, confirmId, "123456").passed()).isTrue();
+            assertThat(pwdFailCount(confirmId))
+                    .as("输对一次就该重新起算，历史错误不能累积误伤")
+                    .isZero();
+            assertThat(service.confirmOrder(BankTestDb.MEM_RETAIL, confirmId, true).kind())
+                    .isEqualTo("SUCCESS");
+        }
+
+        @Test
+        @DisplayName("连续错 3 次：第 3 次直接作废确认单")
+        void thirdWrongAttemptVoidsOrder() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+
+            assertThat(service.verifyPayPassword(BankTestDb.MEM_RETAIL, confirmId, "000000").message())
+                    .contains("还可尝试 2 次");
+            service.verifyPayPassword(BankTestDb.MEM_RETAIL, confirmId, "000000");
+            var third = service.verifyPayPassword(BankTestDb.MEM_RETAIL, confirmId, "000000");
+            assertThat(third.passed()).isFalse();
+            assertThat(third.message()).contains("已作废");
+            assertThat(BankTestDb.statusOf(confirmId)).isEqualTo("REJECTED");
+            assertThat(BankTestDb.auditResults("transfer.confirm")).contains("DENY");
+        }
+
+        @Test
+        @DisplayName("作废后的单子绕过密码门也执行不了：状态机只认 PENDING")
+        void voidedOrderCannotExecute() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+            for (int i = 0; i < 3; i++) {
+                service.verifyPayPassword(BankTestDb.MEM_RETAIL, confirmId, "000000");
+            }
+
+            assertThat(service.confirmOrder(BankTestDb.MEM_RETAIL, confirmId, true).kind())
+                    .isEqualTo("DENY");
+            assertThat(BankTestDb.statusOf(confirmId)).isEqualTo("REJECTED");
+        }
+
+        @Test
+        @DisplayName("作废后重新发起：新确认单的试错计数从零开始")
+        void newOrderStartsFresh() {
+            String first = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "100.00");
+            for (int i = 0; i < 3; i++) {
+                service.verifyPayPassword(BankTestDb.MEM_RETAIL, first, "000000");
+            }
+
+            String second = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "100.00");
+            assertThat(service.verifyPayPassword(BankTestDb.MEM_RETAIL, second, "123456").passed()).isTrue();
+            assertThat(service.confirmOrder(BankTestDb.MEM_RETAIL, second, true).kind())
+                    .isEqualTo("SUCCESS");
+        }
+
+        private int pwdFailCount(String confirmId) {
+            return BankTestDb.jdbc().queryForObject(
+                    "SELECT pwd_fail_count FROM bank_transfer_order WHERE confirm_id = ?",
+                    Integer.class, confirmId);
+        }
+    }
+
     private static void seedExecutedOrderToday(String memoryId, String from, String amount) {
         BankTestDb.jdbc().update("""
                 INSERT INTO bank_transfer_order

@@ -27,10 +27,13 @@ public class BankToolProvider implements ToolProvider {
 
     private final AccountTools accountTools;
     private final TransferTools transferTools;
+    private final KnowledgeTools knowledgeTools;
 
-    public BankToolProvider(AccountTools accountTools, TransferTools transferTools) {
+    public BankToolProvider(AccountTools accountTools, TransferTools transferTools,
+                            KnowledgeTools knowledgeTools) {
         this.accountTools = accountTools;
         this.transferTools = transferTools;
+        this.knowledgeTools = knowledgeTools;
     }
 
     @Override
@@ -61,9 +64,14 @@ public class BankToolProvider implements ToolProvider {
         return builder.build();
     }
 
-    /** 员工没有资金操作工具，直接不参与注册 */
+    /**
+     * 员工没有资金操作工具，直接不参与注册；知识检索只读，三种身份都可用。
+     * （工具方法内部的身份校验仍是第二道兜底，这里只是让模型「看不见」不该有的能力）
+     */
     private List<Object> toolObjectsFor(BankIdentity identity) {
-        return identity.isStaff() ? List.of(accountTools) : List.of(accountTools, transferTools);
+        return identity.isStaff()
+                ? List.of(accountTools, knowledgeTools)
+                : List.of(accountTools, transferTools, knowledgeTools);
     }
 
     /** 仅内部员工可用的工具（全行概况等） */
