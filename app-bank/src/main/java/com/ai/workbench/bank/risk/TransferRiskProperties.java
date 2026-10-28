@@ -35,6 +35,15 @@ public class TransferRiskProperties {
     /** 收款黑名单（命中直接拒绝） */
     private Set<String> blacklist = new CopyOnWriteArraySet<>(List.of("62220004"));
 
+    /**
+     * 大额转账人工审批阈值（元），0 表示该身份不启用强制审批。
+     * 单笔达到阈值时确认单创建后进入 APPROVING，用户确认前必须由管理端审批放行——
+     * 风控拒绝是「当场挡下」，人工审批是「转给有完整信息的人判断」，两者互补而非重复。
+     */
+    private BigDecimal retailApprovalThreshold = BigDecimal.ZERO;
+
+    private BigDecimal corporateApprovalThreshold = new BigDecimal("100000.00");
+
     public BigDecimal getRetailSingleLimit() {
         return retailSingleLimit;
     }
@@ -73,5 +82,21 @@ public class TransferRiskProperties {
 
     public void setBlacklist(List<String> blacklist) {
         this.blacklist = new CopyOnWriteArraySet<>(blacklist);
+    }
+
+    public BigDecimal getRetailApprovalThreshold() {
+        return retailApprovalThreshold;
+    }
+
+    public void setRetailApprovalThreshold(BigDecimal retailApprovalThreshold) {
+        this.retailApprovalThreshold = retailApprovalThreshold;
+    }
+
+    public BigDecimal getCorporateApprovalThreshold() {
+        return corporateApprovalThreshold;
+    }
+
+    public void setCorporateApprovalThreshold(BigDecimal corporateApprovalThreshold) {
+        this.corporateApprovalThreshold = corporateApprovalThreshold;
     }
 }

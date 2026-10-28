@@ -44,6 +44,8 @@ export interface ChatEvent {
   toOwner?: string
   amount?: number
   reason?: string
+  /** confirm_request 附带：单据状态（PENDING 可双因子确认 / APPROVING 大额审批中仅可取消） */
+  status?: 'PENDING' | 'APPROVING'
 }
 
 export interface ConfirmRequestData {
@@ -53,6 +55,8 @@ export interface ConfirmRequestData {
   toOwner: string
   amount: number
   reason: string
+  /** SSE 推卡时带回的单据状态：APPROVING 的卡片只渲染取消按钮 */
+  orderStatus?: 'PENDING' | 'APPROVING'
 }
 
 export interface HistoryMsg {
@@ -242,18 +246,20 @@ export function readCachedSessions(agent: string): unknown[] {
 }
 
 /** 确认/取消转账卡片。幂等性由后端状态机保证：重复提交只会得到"已处理过"提示。
- *  payPassword 仅确认（执行）时需要——资金变动的二次验证因子（演示桩：固定支付密码）；取消不需要 */
+ *  确认（执行）需要双因子：payPassword（验证"知道"）+ otpCode（验证"持有"）；
+ *  取消不涉及资金，两个因子都不需要 */
 export async function respondTransferConfirm(
   basePath: string,
   memoryId: string,
   confirmId: string,
   action: 'confirm' | 'cancel',
   payPassword?: string,
+  otpCode?: string,
 ): Promise<{ ok: boolean; message: string }> {
   const resp = await apiFetch(`${basePath}/api/transfer/confirm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memoryId, confirmId, action, payPassword }),
+    body: JSON.stringify({ memoryId, confirmId, action, payPassword, otpCode }),
   })
   if (!resp.ok) {
     throw new Error(await describeFailure(resp))
@@ -261,15 +267,34 @@ export async function respondTransferConfirm(
   return await resp.json() as { ok: boolean; message: string }
 }
 
+/** 为确认单发送短信验证码。演示环境无短信通道，demoCode 由后端直接回显给前端弹提示；
+ *  60 秒内重复请求会被后端拒绝（限流窗口），前端按钮倒计时与其对齐 */
+export async function sendTransferOtp(
+  basePath: string,
+  memoryId: string,
+  confirmId: string,
+): Promise<{ ok: boolean; message: string; demoCode?: string }> {
+  const resp = await apiFetch(`${basePath}/api/transfer/otp/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memoryId, confirmId }),
+  })
+  if (!resp.ok) {
+    throw new Error(await describeFailure(resp))
+  }
+  return await resp.json() as { ok: boolean; message: string; demoCode?: string }
+}
+
 /**
- * 本会话交易单：PENDING（待确认，带 expiresAt 渲染倒计时）与
- * EXECUTED（已执行，带 bankRef/executedAt 支撑「查看电子回单」入口）两种状态。
+ * 本会话交易单：PENDING（待确认，带 expiresAt 渲染倒计时）、
+ * APPROVING（大额人工审批中，确认区禁用）与
+ * EXECUTED（已执行，带 bankRef/executedAt 支撑「查看电子回单」入口）三种状态。
  */
 export interface TransferOrderView extends ConfirmRequestData {
-  status: 'PENDING' | 'EXECUTED'
+  status: 'PENDING' | 'APPROVING' | 'EXECUTED'
   bankRef?: string | null
   executedAt?: number | null
-  /** PENDING 单的有效期截止（epoch 毫秒）；EXECUTED 单为 null */
+  /** PENDING 单的有效期截止（epoch 毫秒）；APPROVING/EXECUTED 单为 null */
   expiresAt?: number | null
 }
 
@@ -382,6 +407,7 @@ export async function streamChat(opts: {
           toOwner: evt.toOwner ?? '',
           amount: evt.amount ?? 0,
           reason: evt.reason ?? '',
+          orderStatus: evt.status,
         })
       }
     }

@@ -37,6 +37,8 @@ public class TransferConfirmCardListener implements AgentStreamListener {
             event.put("toOwner", order.toOwner());
             event.put("amount", order.amount());
             event.put("reason", order.reason() == null ? "" : order.reason());
+            // 状态透传：前端据 PENDING/APPROVING 渲染不同的卡片交互（确认 vs 仅取消）
+            event.put("status", order.status());
             SseSender.send(emitter, event);
         }
     }

@@ -34,6 +34,13 @@ public class TransferService {
     @Value("${bank.transfer-confirm-ttl-minutes:10}")
     private long confirmTtlMinutes;
 
+    /** 短信验证码有效期（分钟）与重发间隔（秒） */
+    @Value("${bank.otp-ttl-minutes:5}")
+    private long otpTtlMinutes;
+
+    @Value("${bank.otp-resend-seconds:60}")
+    private long otpResendSeconds;
+
     /**
      * 支付密码（演示桩）：确认转账时的二次验证因子，生产应换成密码卡片/短信动态码。
      * 密码校验放在 Service 而不是控制器：试错计数与作废要和确认单状态在同一个事务里推进，
@@ -78,9 +85,9 @@ public class TransferService {
         }
     }
 
-    /** 推给前端确认卡片的数据 */
+    /** 推给前端确认卡片的数据（status 让前端区分渲染：PENDING 可双因子确认，APPROVING 仅可取消） */
     public record PendingOrder(String confirmId, String fromAccount, String toAccount,
-                               String toOwner, BigDecimal amount, String reason) {
+                               String toOwner, BigDecimal amount, String reason, String status) {
 
     }
 
@@ -134,25 +141,41 @@ public class TransferService {
         }
 
         String confirmId = UUID.randomUUID().toString();
+        // 大额分流：达到身份阈值的单子不直接进入用户确认，先交银行人工审批。
+        // APPROVING 不是拒绝——规则已经放行，只是把「执行与否」的决定权交给有完整信息的人。
+        BigDecimal approvalThreshold = identity == BankIdentity.CORPORATE
+                ? riskProps.getCorporateApprovalThreshold()
+                : riskProps.getRetailApprovalThreshold();
+        boolean needsApproval = approvalThreshold.signum() > 0
+                && amount.compareTo(approvalThreshold) >= 0;
+        String status = needsApproval ? "APPROVING" : "PENDING";
         jdbc.update("""
                 INSERT INTO bank_transfer_order (confirm_id, memory_id, from_account, to_account, amount, reason, status)
-                VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, confirmId, memoryId, from.get().accountNo(), to.account().get().accountNo(), amount,
-                reason == null || reason.isBlank() ? null : reason);
+                reason == null || reason.isBlank() ? null : reason, status);
         audit.record(memoryId, "transfer",
-                "创建确认单 %s: to=%s, amount=%s".formatted(confirmId, to.account().get().accountNo(), amount), "PENDING");
+                "创建确认单 %s: to=%s, amount=%s".formatted(confirmId, to.account().get().accountNo(), amount), status);
+        if (needsApproval) {
+            return TransferResult.pending(
+                    "转账确认单已创建（确认码 %s）：%s（%s）→ %s（%s），金额 %.2f 元。"
+                            + "该笔金额较大，已提交银行人工审批，管理员在管理端审批中心放行后，用户才能确认执行。"
+                            .formatted(confirmId, from.get().accountNo(), from.get().owner(),
+                                    to.account().get().accountNo(), to.account().get().owner(), amount));
+        }
         return TransferResult.pending(
                 "转账确认单已创建（确认码 %s）：%s（%s）→ %s（%s），金额 %.2f 元，等待用户确认。"
                         .formatted(confirmId, from.get().accountNo(), from.get().owner(),
                                 to.account().get().accountNo(), to.account().get().owner(), amount));
     }
 
-    /** 底座流结束时回调：取本会话还没推送过卡片的确认单，并标记已推送（避免每轮都重发） */
+    /** 底座流结束时回调：取本会话还没推送过卡片的确认单，并标记已推送（避免每轮都重发）。
+     *  APPROVING 也要推：大额单流结束若不推卡片，用户只能靠刷新页面才能看到审批中的单子 */
     public List<PendingOrder> takeUnnotifiedPending(String memoryId) {
         List<PendingOrder> orders = jdbc.query("""
-                SELECT confirm_id, from_account, to_account, amount, reason
+                SELECT confirm_id, from_account, to_account, amount, reason, status
                 FROM bank_transfer_order
-                WHERE memory_id = ? AND status = 'PENDING' AND notified = 0
+                WHERE memory_id = ? AND status IN ('PENDING', 'APPROVING') AND notified = 0
                 ORDER BY id DESC LIMIT 5
                 """, (rs, i) -> new PendingOrder(
                         rs.getString("confirm_id"),
@@ -160,7 +183,8 @@ public class TransferService {
                         rs.getString("to_account"),
                         ownerOf(rs.getString("to_account")),
                         rs.getBigDecimal("amount"),
-                        rs.getString("reason")),
+                        rs.getString("reason"),
+                        rs.getString("status")),
                 memoryId);
         for (PendingOrder order : orders) {
             jdbc.update("UPDATE bank_transfer_order SET notified = 1 WHERE confirm_id = ?", order.confirmId());
@@ -194,6 +218,22 @@ public class TransferService {
                         "PENDING", null, null,
                         rs.getTimestamp("created_at").getTime() + confirmTtlMinutes * 60000),
                 memoryId, cutoff));
+        // 审批中的单子同样要恢复卡片：用户刷新后应看到「等待银行审批」而不是凭空消失。
+        // APPROVING 不受 TTL 约束（审批可能需要更久），expiresAt 传 null
+        orders.addAll(jdbc.query("""
+                SELECT confirm_id, from_account, to_account, amount, reason, created_at
+                FROM bank_transfer_order
+                WHERE memory_id = ? AND status = 'APPROVING'
+                ORDER BY id ASC LIMIT 10
+                """, (rs, i) -> new OrderView(
+                        rs.getString("confirm_id"),
+                        rs.getString("from_account"),
+                        rs.getString("to_account"),
+                        ownerOf(rs.getString("to_account")),
+                        rs.getBigDecimal("amount"),
+                        rs.getString("reason"),
+                        "APPROVING", null, null, null),
+                memoryId));
         orders.addAll(jdbc.query("""
                 SELECT confirm_id, from_account, to_account, amount, reason, bank_ref, executed_at
                 FROM bank_transfer_order
@@ -285,7 +325,8 @@ public class TransferService {
             return new PasswordVerification(false, "请输入支付密码后再确认转账。");
         }
         Optional<OrderRow> found = jdbc.query("""
-                SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
+                SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at,
+                otp_code, otp_expire_at, otp_sent_at
                 FROM bank_transfer_order WHERE confirm_id = ? AND memory_id = ?
                 """, rowMapper(), confirmId, memoryId).stream().findFirst();
         if (found.isEmpty()) {
@@ -322,6 +363,120 @@ public class TransferService {
                 "支付密码错误，还可尝试 %d 次。".formatted(Math.max(0, MAX_PWD_ATTEMPTS - failCount)));
     }
 
+    /** 短信验证码校验结果：passed=false 时 message 直接面向用户（前端原样展示） */
+    public record OtpVerification(boolean passed, String message) {
+
+    }
+
+    /**
+     * 用户确认路径的短信验证码校验（管理端审批不走这里）。
+     * 与支付密码构成双因子：密码验证「知道」，验证码验证「持有」（手机在你手上）。
+     * 试错锁定与密码同一套机制：错 MAX_PWD_ATTEMPTS 次作废确认单，防止暴力枚举 6 位数字。
+     * 过期与「错误」分开处理：过期不消耗试错次数——用户不应为时效问题被锁死。
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public OtpVerification verifyOtp(String memoryId, String confirmId, String given) {
+        String attempt = given == null ? "" : given.trim();
+        if (attempt.isEmpty()) {
+            return new OtpVerification(false, "请先获取短信验证码并输入后再确认转账。");
+        }
+        Optional<OrderRow> found = jdbc.query("""
+                SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at,
+                otp_code, otp_expire_at, otp_sent_at
+                FROM bank_transfer_order WHERE confirm_id = ? AND memory_id = ?
+                """, rowMapper(), confirmId, memoryId).stream().findFirst();
+        if (found.isEmpty()) {
+            return new OtpVerification(false, "确认单不存在或已处理。");
+        }
+        OrderRow order = found.get();
+        if ("APPROVING".equals(order.status())) {
+            return new OtpVerification(false, "该笔转账金额较大，需银行审批通过后才能确认，请稍候。");
+        }
+        if (!"PENDING".equals(order.status())) {
+            return new OtpVerification(false, "该确认单已处理过，无需再次确认。");
+        }
+        if (order.otpCode() == null || order.otpExpireAt() == null) {
+            return new OtpVerification(false, "尚未获取短信验证码，请先点击「发送验证码」。");
+        }
+        if (order.otpExpireAt().before(new Timestamp(System.currentTimeMillis()))) {
+            return new OtpVerification(false, "验证码已过期，请重新获取后再输入。");
+        }
+        if (order.otpCode().equals(attempt)) {
+            jdbc.update("UPDATE bank_transfer_order SET otp_fail_count = 0 WHERE id = ?", order.id());
+            return new OtpVerification(true, "短信验证码校验通过。");
+        }
+        jdbc.update("UPDATE bank_transfer_order SET otp_fail_count = otp_fail_count + 1 WHERE id = ?", order.id());
+        int failCount = jdbc.queryForObject(
+                "SELECT otp_fail_count FROM bank_transfer_order WHERE id = ?", Integer.class, order.id());
+        if (failCount >= MAX_PWD_ATTEMPTS) {
+            int voided = jdbc.update(
+                    "UPDATE bank_transfer_order SET status = 'REJECTED' WHERE id = ? AND status = 'PENDING'",
+                    order.id());
+            if (voided > 0) {
+                audit.record(memoryId, "transfer.confirm",
+                        "短信验证码连续错误 %d 次，确认单 %s 已作废".formatted(MAX_PWD_ATTEMPTS, confirmId), "DENY");
+                return new OtpVerification(false, "验证码错误次数过多，确认单已作废。请重新发起转账。");
+            }
+        }
+        audit.record(memoryId, "transfer.confirm",
+                "短信验证码错误（%d/%d）确认单 %s".formatted(failCount, MAX_PWD_ATTEMPTS, confirmId), "DENY");
+        return new OtpVerification(false,
+                "验证码错误，还可尝试 %d 次。".formatted(Math.max(0, MAX_PWD_ATTEMPTS - failCount)));
+    }
+
+    /**
+     * 发送短信验证码。演示环境没有短信通道，验证码经 HTTP 响应直接回显给前端弹 toast——
+     * 这让「获取验证码 → 输入 → 确认」的交互完整可演示；生产替换为短信网关后，
+     * 只需把 demoCode 置空、去掉响应字段，前端交互不变。
+     *
+     * 限流：同一确认单 otp_resend_seconds 内只允许发一次——短信成本高，
+     * 且无限重发等于把 6 位码的空间暴露给时间攻击。每次发码同时重置试错计数。
+     */
+    public record OtpSend(boolean ok, String message, String demoCode) {
+
+    }
+
+    public OtpSend sendOtp(String memoryId, String confirmId) {
+        BankIdentity identity = BankIdentity.fromMemoryId(memoryId);
+        if (!identity.canTransfer()) {
+            return new OtpSend(false, "内部员工账号没有资金操作权限。", null);
+        }
+        Optional<OrderRow> found = jdbc.query("""
+                SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at,
+                otp_code, otp_expire_at, otp_sent_at
+                FROM bank_transfer_order WHERE confirm_id = ? AND memory_id = ?
+                """, rowMapper(), confirmId, memoryId).stream().findFirst();
+        if (found.isEmpty()) {
+            return new OtpSend(false, "确认单不存在或已处理。", null);
+        }
+        OrderRow order = found.get();
+        if ("APPROVING".equals(order.status())) {
+            return new OtpSend(false, "该笔转账需银行审批通过后才能确认，届时再获取验证码。", null);
+        }
+        if (!"PENDING".equals(order.status())) {
+            return new OtpSend(false, "该确认单已处理过，无需再发验证码。", null);
+        }
+        if (order.otpSentAt() != null) {
+            long sinceSent = (System.currentTimeMillis() - order.otpSentAt().getTime()) / 1000;
+            if (sinceSent < otpResendSeconds) {
+                return new OtpSend(false,
+                        "验证码已发送，%d 秒后可重新获取。".formatted(otpResendSeconds - sinceSent), null);
+            }
+        }
+        String code = "%06d".formatted(SECURE_RANDOM.nextInt(1_000_000));
+        Timestamp expireAt = new Timestamp(System.currentTimeMillis() + otpTtlMinutes * 60000);
+        jdbc.update("""
+                UPDATE bank_transfer_order
+                SET otp_code = ?, otp_expire_at = ?, otp_sent_at = NOW(), otp_fail_count = 0
+                WHERE id = ?
+                """, code, expireAt, order.id());
+        audit.record(memoryId, "transfer.otp", "发送验证码，确认单 " + confirmId, "SUCCESS");
+        return new OtpSend(true,
+                "验证码已发送（演示环境直接回显），%d 分钟内有效。".formatted(otpTtlMinutes), code);
+    }
+
+    private static final java.security.SecureRandom SECURE_RANDOM = new java.security.SecureRandom();
+
     /**
      * 第二段：只有确认接口能调。归属校验 → 过期检查 → 账户行锁 → 幂等 CAS → 规则复检 → 划款，同一事务。
      *
@@ -341,7 +496,8 @@ public class TransferService {
             return TransferResult.deny("内部员工账号没有资金操作权限，无法操作转账确认单。");
         }
         Optional<OrderRow> found = jdbc.query("""
-                SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
+                SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at,
+                otp_code, otp_expire_at, otp_sent_at
                 FROM bank_transfer_order WHERE confirm_id = ? AND memory_id = ?
                 """, rowMapper(), confirmId, memoryId).stream().findFirst();
         if (found.isEmpty()) {
@@ -349,16 +505,24 @@ public class TransferService {
         }
         OrderRow order = found.get();
 
-        // 取消：同样走 CAS，只有 PENDING 能取消
+        // 取消：同样走 CAS。审批中的单子也允许取消——用户有权撤回自己的申请
         if (!confirm) {
             int cancelled = jdbc.update(
-                    "UPDATE bank_transfer_order SET status = 'CANCELLED' WHERE id = ? AND status = 'PENDING'",
+                    "UPDATE bank_transfer_order SET status = 'CANCELLED' WHERE id = ? AND status IN ('PENDING', 'APPROVING')",
                     order.id());
             audit.record(memoryId, "transfer.confirm", "取消确认单 " + confirmId,
                     cancelled > 0 ? "CANCELLED" : "ALREADY_DONE");
             return cancelled > 0
                     ? TransferResult.pending("转账已取消，资金未变动。")
                     : TransferResult.pending("该确认单已处理过（状态 %s），取消无效。".formatted(order.status()));
+        }
+
+        // 大额人工审批闸门：APPROVING 单用户确认不了。规则预检已放行（创建时通过），
+        // 这里拦的是「执行时机」——审批通过后单子回到 PENDING，用户才能走正常确认流程
+        if ("APPROVING".equals(order.status())) {
+            audit.record(memoryId, "transfer.confirm", "确认单 %s 审批中，用户确认被拒".formatted(confirmId), "DENY");
+            return TransferResult.deny(
+                    "该笔转账金额较大，需银行审批通过后才能确认。管理员在管理端审批中心放行后会通知你，届时再操作这张卡片。");
         }
 
         // 过期检查：确认单超时未确认视为失效
@@ -452,6 +616,41 @@ public class TransferService {
     }
 
     /**
+     * 管理端审批 APPROVING 单（大额人工审批档位）。
+     * 通过 = CAS 回 PENDING 并清 notified，让确认卡片在下一轮流结束时重新推送，
+     * 用户继续在卡片上走密码 + 短信码确认——审批人放行的是「这笔可以办」，
+     * 执行仍要持有人本人操作，审批不代替用户碰钱。
+     * 驳回 = CAS 到 REJECTED，与用户取消同一终态。
+     * PENDING 单（小额）不走这里：管理端的兜底执行仍由 decide 直接调 confirmOrder。
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public TransferResult reviewApproving(String memoryId, String confirmId, boolean approve) {
+        if (approve) {
+            // created_at 一并重置：TTL 的语义是「用户的确认窗口」，APPROVING 期间用户根本
+            // 没有确认资格，不该让审批耗时把窗口吃掉——放行后从零起算，否则通过即死卡
+            int released = jdbc.update(
+                    "UPDATE bank_transfer_order SET status = 'PENDING', notified = 0, created_at = NOW() "
+                            + "WHERE confirm_id = ? AND memory_id = ? AND status = 'APPROVING'",
+                    confirmId, memoryId);
+            if (released == 0) {
+                return TransferResult.pending("该确认单不在审批中（可能已被处理），操作无效。");
+            }
+            audit.record(memoryId, "transfer.approval", "大额确认单 %s 审批通过，回到待确认".formatted(confirmId), "PENDING");
+            return TransferResult.pending(
+                    "审批已通过，用户可在确认卡片上继续完成转账（支付密码 + 短信验证码）。");
+        }
+        int rejected = jdbc.update(
+                "UPDATE bank_transfer_order SET status = 'REJECTED' "
+                        + "WHERE confirm_id = ? AND memory_id = ? AND status = 'APPROVING'",
+                confirmId, memoryId);
+        if (rejected == 0) {
+            return TransferResult.pending("该确认单不在审批中（可能已被处理），操作无效。");
+        }
+        audit.record(memoryId, "transfer.approval", "大额确认单 %s 审批驳回".formatted(confirmId), "REJECTED");
+        return TransferResult.deny("审批未通过，转账已驳回，资金未变动。");
+    }
+
+    /**
      * 供 queryTransferOrder 工具使用：把确认单的真实状态（含过期判定）讲给模型听。
      * 传了确认码也按「本会话」限定查询——确认码泄漏时，别的会话也读不到这张单。
      */
@@ -460,11 +659,13 @@ public class TransferService {
                 && !"null".equalsIgnoreCase(confirmId.trim()) && !"-".equals(confirmId.trim());
         List<OrderRow> rows = byId
                 ? jdbc.query("""
-                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
+                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at,
+                        otp_code, otp_expire_at, otp_sent_at
                         FROM bank_transfer_order WHERE confirm_id = ? AND memory_id = ?
                         """, rowMapper(), confirmId.trim(), memoryId)
                 : jdbc.query("""
-                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
+                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at,
+                        otp_code, otp_expire_at, otp_sent_at
                         FROM bank_transfer_order WHERE memory_id = ? ORDER BY id DESC LIMIT 1
                         """, rowMapper(), memoryId);
         if (rows.isEmpty()) {
@@ -485,6 +686,8 @@ public class TransferService {
         return switch (effectiveStatus) {
             case "PENDING" -> summary + "（待确认，请在页面的确认卡片上操作，有效期还剩约 "
                     + Math.max(0, confirmTtlMinutes - ageMinutes) + " 分钟）";
+            case "APPROVING" -> summary + "（金额较大，等待银行人工审批，管理员在管理端审批中心放行后用户才能确认；"
+                    + "审批期间单子不会过期）";
             case "EXPIRED" -> summary + "（已过期无法确认，请让用户重新发起转账，你将创建新的确认单）";
             case "EXECUTED" -> summary + "（已执行成功，资金已划转，银行回单号 "
                     + order.bankRef() + "，用户要凭证时引导其点确认卡片上的「查看电子回单」）";
@@ -504,12 +707,14 @@ public class TransferService {
                 && !"null".equalsIgnoreCase(confirmId.trim()) && !"-".equals(confirmId.trim());
         List<OrderRow> rows = byId
                 ? jdbc.query("""
-                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
+                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at,
+                        otp_code, otp_expire_at, otp_sent_at
                         FROM bank_transfer_order
                         WHERE confirm_id = ? AND memory_id = ? AND status = 'EXECUTED' AND bank_ref IS NOT NULL
                         """, rowMapper(), confirmId.trim(), memoryId)
                 : jdbc.query("""
-                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at
+                        SELECT id, confirm_id, from_account, to_account, amount, reason, status, bank_ref, created_at, executed_at,
+                        otp_code, otp_expire_at, otp_sent_at
                         FROM bank_transfer_order
                         WHERE memory_id = ? AND status = 'EXECUTED' AND bank_ref IS NOT NULL
                         ORDER BY id DESC LIMIT 5
@@ -584,7 +789,10 @@ public class TransferService {
                 rs.getString("status"),
                 rs.getString("bank_ref"),
                 rs.getTimestamp("created_at"),
-                rs.getTimestamp("executed_at"));
+                rs.getTimestamp("executed_at"),
+                rs.getString("otp_code"),
+                rs.getTimestamp("otp_expire_at"),
+                rs.getTimestamp("otp_sent_at"));
     }
 
     /**
@@ -678,10 +886,11 @@ public class TransferService {
         return byOwner.isEmpty() ? RecipientLookup.notFound() : RecipientLookup.found(byOwner.get(0));
     }
 
-    /** bankRef / executedAt 仅 EXECUTED 单非空（回单号与状态机 CAS 同一条 UPDATE 写入） */
+    /** bankRef / executedAt 仅 EXECUTED 单非空；otp* 为短信验证码状态（V11） */
     private record OrderRow(Long id, String confirmId, String fromAccount, String toAccount,
                             BigDecimal amount, String reason, String status, String bankRef,
-                            Timestamp createdAt, Timestamp executedAt) {
+                            Timestamp createdAt, Timestamp executedAt,
+                            String otpCode, Timestamp otpExpireAt, Timestamp otpSentAt) {
 
     }
 }

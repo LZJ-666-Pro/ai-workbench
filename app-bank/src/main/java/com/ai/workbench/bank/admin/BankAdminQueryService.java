@@ -369,8 +369,9 @@ public class BankAdminQueryService {
 
     /** 审批看板：状态统计 + 待审批队列（全量，PENDING 通常很少） */
     public ApprovalBoard approvalBoard() {
+        // APPROVING（大额人工审批）与 PENDING 一同进审批队列：都是「等银行做决定」的单子
         Long pending = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM bank_transfer_order WHERE status = 'PENDING'", Long.class);
+                "SELECT COUNT(*) FROM bank_transfer_order WHERE status IN ('PENDING', 'APPROVING')", Long.class);
         Long executedToday = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM bank_transfer_order WHERE status = 'EXECUTED' AND DATE(created_at) = CURDATE()",
                 Long.class);
@@ -380,7 +381,7 @@ public class BankAdminQueryService {
                 "SELECT COUNT(*) FROM bank_transfer_order WHERE status = 'REJECTED'", Long.class);
         List<OrderView> pendingOrders = jdbc.query(
                 "SELECT id, confirm_id, memory_id, from_account, to_account, amount, reason, status, created_at "
-                        + "FROM bank_transfer_order WHERE status = 'PENDING' ORDER BY id DESC",
+                        + "FROM bank_transfer_order WHERE status IN ('PENDING', 'APPROVING') ORDER BY id DESC",
                 orderMapper());
         return new ApprovalBoard(pending, executedToday, cancelled, rejected, pendingOrders);
     }

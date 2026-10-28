@@ -35,15 +35,18 @@ import org.springframework.web.multipart.MultipartFile;
  *   PUT    /api/kb/spaces/{id}/documents/{docId} 启用/禁用文档
  *   DELETE /api/kb/spaces/{id}/documents/{docId} 删除文档
  *   POST   /api/kb/spaces/{id}/rebuild           重建索引（全量重切）
- *   POST   /api/kb/spaces/{id}/search            检索测试（bigram 关键词召回打分）
+ *   POST   /api/kb/spaces/{id}/search            检索测试（关键词 + 向量语义混合召回）
  *
  * MVP 诚实边界：txt/md/csv 真实提取、真实切片；pdf/docx 上传后如实标 FAILED
- * （文本提取引擎第二期接入）；检索是可解释的关键词召回，向量语义检索待
- * embedding 接入后在 kb_chunk 平滑升级。空间状态由文档状态实时派生。
+ * （文本提取引擎第二期接入）；检索默认关键词召回，embedding 打开时自动升级为
+ * 混合检索（HybridSearchService 双路 RRF 融合）。空间状态由文档状态实时派生。
  */
 @RestController
 @RequestMapping("/api/kb")
 public class KbController {
+
+    /** 混合检索入口：embedding 未启用时内部退化为纯关键词，本控制器不感知差异 */
+    private final HybridSearchService hybrid;
 
     public record SpaceView(long id, String name, String description, String status,
                             int chunkSize, int chunkOverlap, int docCount, int chunkTotal,
@@ -78,9 +81,10 @@ public class KbController {
     private final JdbcTemplate jdbc;
     private final TextIndexer indexer;
 
-    public KbController(JdbcTemplate jdbc, TextIndexer indexer) {
+    public KbController(JdbcTemplate jdbc, TextIndexer indexer, HybridSearchService hybrid) {
         this.jdbc = jdbc;
         this.indexer = indexer;
+        this.hybrid = hybrid;
     }
 
     // ---------- 空间：列表 / 详情 ----------
@@ -264,6 +268,12 @@ public class KbController {
         if (updated == 0) {
             return badRequest("文档不存在");
         }
+        // 向量索引同步：禁用的文档不再参与语义召回（关键词路靠 enabled 过滤，向量路必须删）
+        if (req.enabled()) {
+            hybrid.reindexDoc(jdbc, docId);
+        } else {
+            hybrid.removeDoc(docId);
+        }
         recalcSpace(id);
         return ResponseEntity.ok(Map.of("message", req.enabled() ? "文档已启用，参与检索" : "文档已禁用，不参与检索"));
     }
@@ -275,6 +285,7 @@ public class KbController {
             return badRequest("文档不存在");
         }
         jdbc.update("DELETE FROM kb_chunk WHERE doc_id = ?", docId);
+        hybrid.removeDoc(docId);
         recalcSpace(id);
         return ResponseEntity.ok(Map.of("message", "文档及切片已删除"));
     }
@@ -288,11 +299,14 @@ public class KbController {
         List<long[]> docs = jdbc.query(
                 "SELECT id, words FROM kb_document WHERE space_id = ? AND status = 'READY'",
                 (rs, i) -> new long[]{rs.getLong("id"), rs.getInt("words")}, id);
+        hybrid.removeSpace(id);
         jdbc.update("DELETE FROM kb_chunk WHERE space_id = ?", id);
         int total = 0;
         for (long[] doc : docs) {
             total += rechunkDoc(id, doc[0], conf);
         }
+        // 重切后统一重建向量索引：从 MySQL 读权威数据，向量库丢了也能一键恢复
+        hybrid.reindexSpace(jdbc, id);
         recalcSpace(id);
         return ResponseEntity.ok(Map.of("message", "重建完成：" + docs.size() + " 篇文档，共 " + total + " 个切片"));
     }
@@ -316,12 +330,15 @@ public class KbController {
                 WHERE c.space_id = ?
                 """, (rs, i) -> new TextIndexer.Candidate(rs.getLong("doc_id"), rs.getString("doc_title"),
                 rs.getInt("seq"), rs.getString("content"), rs.getBoolean("enabled")), id);
-        List<HitView> hits = indexer.search(question, candidates, topN).stream()
+        List<HitView> hits = hybrid.search(question, candidates, Set.of(id), topN).stream()
                 .map(h -> new HitView(h.docId(), h.docTitle(), h.seq(), h.content(), h.score()))
                 .toList();
         int took = (int) (System.currentTimeMillis() - start);
         return ResponseEntity.ok(new SearchResponse(question, took,
-                "关键词召回（bigram 词面打分）；向量语义检索待 embedding 接入后启用", hits));
+                hybrid.vectorEnabled()
+                        ? "混合召回：关键词词面打分 + 向量语义检索（RRF 融合）"
+                        : "关键词召回（bigram 词面打分）；配置 ai.embedding/ai.rag 后自动升级混合检索",
+                hits));
     }
 
     // ---------- 内部：配置 / 解析 / 计数 ----------
@@ -362,6 +379,9 @@ public class KbController {
         insertChunks(spaceId, docId, chunks);
         jdbc.update("UPDATE kb_document SET chunks = ?, words = ? WHERE id = ?",
                 chunks.size(), content.length(), docId);
+        // 重切的切片同步向量索引（title 需要回查文档表）
+        String title = jdbc.queryForObject("SELECT title FROM kb_document WHERE id = ?", String.class, docId);
+        hybrid.indexDoc(spaceId, docId, title, chunks);
         return chunks.size();
     }
 

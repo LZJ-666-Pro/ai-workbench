@@ -50,19 +50,41 @@ ai:
     requests-per-minute: 20
     # 单个服务对象每日 token 上限（输入+输出）：挡换会话继续刷与长上下文烧额度
     daily-token-limit: 300000
+  # 知识库混合检索的向量半边：与 LLM 同一 OpenAI 兼容网关（DashScope 兼容模式）。
+  # 未启用时 HybridSearchService 自动退化为纯关键词召回，功能不受影响
+  embedding:
+    enabled: true
+    base-url: ${AI_LLM_BASE_URL:https://ws-k4ybdjfu1bcadgfh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
+    api-key: ${AI_LLM_API_KEY:${GLM_API_KEY:}}
+    model-name: text-embedding-v3
+  rag:
+    enabled: true
+    host: localhost
+    port: 15432
+    database: ai_workbench_vec
+    user: postgres
+    password: ai123456
+    table: kb_vectors
+    dimension: 1024
 
 bank:
   # 演示登录态：当前客户账户号（Phase 2 接入登录后改为从会话中取）
   current-account-no: "62220001"
   # 转账确认卡片二次验证的支付密码（演示桩）：固定值便于演示与联调，
-  # 生产环境应替换为密码卡片/短信动态码等真实第二因子
+  # 生产环境应替换为密码卡片等持有人持有的真实因子
   pay-password: "123456"
+  # 短信验证码：有效期与重发间隔（演示环境码由 HTTP 响应回显，生产接短信网关）
+  otp-ttl-minutes: 5
+  otp-resend-seconds: 60
   # 转账风控参数：调整限额/黑名单改这里即可（默认值见 TransferRiskProperties，不写这组时行为不变）
   risk:
     retail-single-limit: 5000.00
     retail-daily-limit: 10000.00
     corporate-single-limit: 500000.00
     corporate-daily-limit: 2000000.00
+    # 大额强制人工审批阈值（元），0 = 该身份不启用；达到阈值走管理端审批放行后才能确认
+    retail-approval-threshold: 0.00
+    corporate-approval-threshold: 100000.00
     blacklist: ["62220004"]
 
 auth:

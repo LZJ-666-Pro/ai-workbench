@@ -840,6 +840,128 @@ class TransferServiceIT {
         }
     }
 
+    @Nested
+    @DisplayName("短信验证码：持有因子（双因子之二）")
+    class Otp {
+
+        @Test
+        @DisplayName("发送：回显演示码且落库；重发在限流窗口内被拒")
+        void sendOtpRespectsResendWindow() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+            TransferService.OtpSend first = service.sendOtp(BankTestDb.MEM_RETAIL, confirmId);
+            assertThat(first.ok()).isTrue();
+            assertThat(first.demoCode()).hasSize(6).matches("\\d{6}");
+            assertThat(otpOf(confirmId)).isEqualTo(first.demoCode());
+            TransferService.OtpSend second = service.sendOtp(BankTestDb.MEM_RETAIL, confirmId);
+            assertThat(second.ok()).as("60 秒限流窗口内不允许重发").isFalse();
+        }
+
+        @Test
+        @DisplayName("双因子齐备才能确认：码对但缺失密码、或反之，都动不了钱")
+        void confirmationRequiresBothFactors() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+            String code = service.sendOtp(BankTestDb.MEM_RETAIL, confirmId).demoCode();
+            assertThat(service.verifyOtp(BankTestDb.MEM_RETAIL, confirmId, code).passed()).isTrue();
+            // 密码没校验通过前（此处未调 verifyPayPassword），确认在控制器层就会被拦；
+            // Service 侧验证器只回答「这一因子对不对」，组合判断在控制器串行完成
+            assertThat(service.verifyOtp(BankTestDb.MEM_RETAIL, confirmId, "000000").passed()).isFalse();
+        }
+
+        @Test
+        @DisplayName("验证码错 3 次确认单作废，正确码也救不回来")
+        void otpLockoutVoidsOrder() {
+            String confirmId = createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+            service.sendOtp(BankTestDb.MEM_RETAIL, confirmId);
+            service.verifyOtp(BankTestDb.MEM_RETAIL, confirmId, "111111");
+            service.verifyOtp(BankTestDb.MEM_RETAIL, confirmId, "222222");
+            assertThat(service.verifyOtp(BankTestDb.MEM_RETAIL, confirmId, "333333").message())
+                    .contains("已作废");
+            assertThat(BankTestDb.statusOf(confirmId)).isEqualTo("REJECTED");
+        }
+
+        @Test
+        @DisplayName("审批中的单子不发码：发码入口与确认入口同样被档")
+        void approvingOrderRefusesOtp() {
+            String confirmId = createOrder(BankTestDb.MEM_CORPORATE, BankTestDb.ACC_PAYEE, "150000.00");
+            assertThat(BankTestDb.statusOf(confirmId)).isEqualTo("APPROVING");
+            TransferService.OtpSend send = service.sendOtp(BankTestDb.MEM_CORPORATE, confirmId);
+            assertThat(send.ok()).as("APPROVING 单不应发码").isFalse();
+            assertThat(service.verifyOtp(BankTestDb.MEM_CORPORATE, confirmId, "123456").passed()).isFalse();
+        }
+
+        private String otpOf(String confirmId) {
+            return BankTestDb.jdbc().queryForObject(
+                    "SELECT otp_code FROM bank_transfer_order WHERE confirm_id = ?",
+                    String.class, confirmId);
+        }
+    }
+
+    @Nested
+    @DisplayName("大额人工审批：APPROVING 状态机")
+    class ApprovalGate {
+
+        @Test
+        @DisplayName("对公 10 万以上建单进 APPROVING，用户确认被档")
+        void largeCorporateOrderRequiresApproval() {
+            String confirmId = createOrder(BankTestDb.MEM_CORPORATE, BankTestDb.ACC_PAYEE, "150000.00");
+            assertThat(BankTestDb.statusOf(confirmId)).isEqualTo("APPROVING");
+            TransferResult deny = service.confirmOrder(BankTestDb.MEM_CORPORATE, confirmId, true);
+            assertThat(deny.kind()).isEqualTo("DENY");
+            assertThat(deny.message()).contains("审批");
+            assertThat(BankTestDb.statusOf(confirmId)).isEqualTo("APPROVING");
+        }
+
+        @Test
+        @DisplayName("小额单不进审批：零售 0 阈值、对公 10 万以下直接 PENDING")
+        void smallOrdersSkipApproval() {
+            createOrder(BankTestDb.MEM_RETAIL, BankTestDb.ACC_PAYEE, "200.00");
+            assertThat(BankTestDb.statusOf(BankTestDb.latestConfirmId(BankTestDb.MEM_RETAIL)))
+                    .isEqualTo("PENDING");
+            String corporateSmall = createOrder(BankTestDb.MEM_CORPORATE, BankTestDb.ACC_PAYEE, "90000.00");
+            assertThat(BankTestDb.statusOf(corporateSmall)).isEqualTo("PENDING");
+        }
+
+        @Test
+        @DisplayName("审批通过回到 PENDING 且重新计时，用户能走完整确认链路")
+        void approvalReleasesOrderBackToUser() {
+            String confirmId = createOrder(BankTestDb.MEM_CORPORATE, BankTestDb.ACC_PAYEE, "150000.00");
+            TransferResult release = service.reviewApproving(BankTestDb.MEM_CORPORATE, confirmId, true);
+            assertThat(release.kind()).isEqualTo("PENDING");
+            assertThat(BankTestDb.statusOf(confirmId)).isEqualTo("PENDING");
+            // 放行后的单子重新起算 TTL：created_at 被刷新到 NOW()
+            java.sql.Timestamp createdAt = BankTestDb.jdbc().queryForObject(
+                    "SELECT created_at FROM bank_transfer_order WHERE confirm_id = ?",
+                    java.sql.Timestamp.class, confirmId);
+            assertThat(createdAt.getTime()).as("放行即重置确认窗口")
+                    .isGreaterThan(System.currentTimeMillis() - 60_000);
+            // 用户正常双因子确认 → 执行成功
+            String code = service.sendOtp(BankTestDb.MEM_CORPORATE, confirmId).demoCode();
+            assertThat(service.verifyPayPassword(BankTestDb.MEM_CORPORATE, confirmId, "123456").passed()).isTrue();
+            assertThat(service.verifyOtp(BankTestDb.MEM_CORPORATE, confirmId, code).passed()).isTrue();
+            assertThat(service.confirmOrder(BankTestDb.MEM_CORPORATE, confirmId, true).kind()).isEqualTo("SUCCESS");
+        }
+
+        @Test
+        @DisplayName("审批驳回：CAS 到 REJECTED，资金未变动")
+        void approvalRejectionVoidsOrder() {
+            String confirmId = createOrder(BankTestDb.MEM_CORPORATE, BankTestDb.ACC_PAYEE, "150000.00");
+            TransferResult rejected = service.reviewApproving(BankTestDb.MEM_CORPORATE, confirmId, false);
+            assertThat(rejected.kind()).isEqualTo("DENY");
+            assertThat(BankTestDb.statusOf(confirmId)).isEqualTo("REJECTED");
+            assertThat(BankTestDb.balanceOf(BankTestDb.ACC_PAYEE)).isEqualByComparingTo("0.00");
+        }
+
+        @Test
+        @DisplayName("审批幂等：已处理的单子再次审批不改变状态")
+        void approvalIsIdempotent() {
+            String confirmId = createOrder(BankTestDb.MEM_CORPORATE, BankTestDb.ACC_PAYEE, "150000.00");
+            service.reviewApproving(BankTestDb.MEM_CORPORATE, confirmId, false);
+            TransferResult again = service.reviewApproving(BankTestDb.MEM_CORPORATE, confirmId, true);
+            assertThat(again.message()).contains("不在审批中");
+            assertThat(BankTestDb.statusOf(confirmId)).isEqualTo("REJECTED");
+        }
+    }
+
     private static void seedExecutedOrderToday(String memoryId, String from, String amount) {
         BankTestDb.jdbc().update("""
                 INSERT INTO bank_transfer_order

@@ -7,6 +7,7 @@ import javax.sql.DataSource;
 import com.ai.workbench.bank.audit.ToolAuditLogger;
 import com.ai.workbench.bank.identity.BankIdentity;
 import com.ai.workbench.bank.support.BankTestDb;
+import com.ai.workbench.core.kb.HybridSearchService;
 import com.ai.workbench.core.kb.TextIndexer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterAll;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -59,8 +61,40 @@ class KnowledgeToolsIT {
         Assumptions.assumeTrue(BankTestDb.available(), "MySQL 不可用，跳过");
         context = new AnnotationConfigApplicationContext(KnowledgeTestConfig.class);
         JdbcTemplate jdbc = context.getBean(JdbcTemplate.class);
-        tools = new KnowledgeTools(jdbc, new TextIndexer(), context.getBean(ToolAuditLogger.class));
+        tools = new KnowledgeTools(jdbc, degradedHybrid(), context.getBean(ToolAuditLogger.class));
         seedCorpus(jdbc);
+    }
+
+    /**
+     * IT 环境没有 embedding/pgvector 基建：用两个「无 Bean」的 ObjectProvider 构造
+     * 降级版混合检索——生产里这对应 ai.embedding/ai.rag 关闭的形态，
+     * 恰好验证了降级路径下知识检索依旧完整可用。
+     */
+    private static HybridSearchService degradedHybrid() {
+        return new HybridSearchService(
+                new ObjectProvider<>() {
+                    @Override
+                    public dev.langchain4j.model.embedding.EmbeddingModel getObject() {
+                        throw new UnsupportedOperationException();
+                    }
+
+                    @Override
+                    public dev.langchain4j.model.embedding.EmbeddingModel getIfAvailable() {
+                        return null;
+                    }
+                },
+                new ObjectProvider<>() {
+                    @Override
+                    public dev.langchain4j.store.embedding.EmbeddingStore<dev.langchain4j.data.segment.TextSegment> getObject() {
+                        throw new UnsupportedOperationException();
+                    }
+
+                    @Override
+                    public dev.langchain4j.store.embedding.EmbeddingStore<dev.langchain4j.data.segment.TextSegment> getIfAvailable() {
+                        return null;
+                    }
+                },
+                new TextIndexer());
     }
 
     @AfterAll

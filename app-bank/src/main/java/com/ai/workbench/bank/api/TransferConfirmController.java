@@ -38,7 +38,8 @@ public class TransferConfirmController {
         this.meterRegistry = meterRegistry;
     }
 
-    public record ConfirmRequest(String memoryId, String confirmId, String action, String payPassword) {
+    public record ConfirmRequest(String memoryId, String confirmId, String action,
+                                 String payPassword, String otpCode) {
 
     }
 
@@ -79,6 +80,19 @@ public class TransferConfirmController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "回单不存在或转账未执行"));
     }
 
+    @PostMapping("/otp/send")
+    public TransferService.OtpSend sendOtp(@RequestBody ConfirmRequest request, HttpServletRequest http) {
+        String memoryId = request.memoryId();
+        if (memoryId == null || memoryId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "缺少会话标识 memoryId");
+        }
+        AuthPrincipal principal = (AuthPrincipal) http.getAttribute(AuthInterceptor.ATTR_PRINCIPAL);
+        if (principal != null && !AuthInterceptor.memoryIdBelongsTo(principal.identityId(), memoryId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权为其他身份的确认单发送验证码");
+        }
+        return transferService.sendOtp(memoryId, request.confirmId());
+    }
+
     @PostMapping("/confirm")
     public ConfirmResponse confirm(@RequestBody ConfirmRequest request, HttpServletRequest http) {
         // memoryId 在请求体里，拦截器看不到，因此这里必须自己把归属校验做完整：
@@ -93,15 +107,22 @@ public class TransferConfirmController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权操作其他身份的转账确认单");
         }
         boolean confirming = "confirm".equals(request.action());
-        // 二次验证：执行（确认）需要支付密码，取消不涉及资金所以不需要。
-        // 校验逻辑（含试错锁定与作废）在 TransferService.verifyPayPassword 的事务里。
+        // 双因子：执行（确认）需要支付密码（验证「知道」）+ 短信验证码（验证「持有」），
+        // 取消不涉及资金所以都不需要。校验逻辑（含试错锁定与作废）各自在 Service 的事务里，
+        // 串行校验——任一失败直接返回，不会把作废和执行混进同一个事务。
         if (confirming) {
-            TransferService.PasswordVerification check = transferService.verifyPayPassword(
+            TransferService.PasswordVerification pwdCheck = transferService.verifyPayPassword(
                     memoryId, request.confirmId(), request.payPassword());
-            if (!check.passed()) {
+            if (!pwdCheck.passed()) {
                 // 密码拒绝单独打点：风控拒绝率看 DENY，密码爆破尝试看这张计数
                 meterRegistry.counter("bank.transfer.confirm", "result", "PWD_DENY").increment();
-                return new ConfirmResponse(false, check.message());
+                return new ConfirmResponse(false, pwdCheck.message());
+            }
+            TransferService.OtpVerification otpCheck = transferService.verifyOtp(
+                    memoryId, request.confirmId(), request.otpCode());
+            if (!otpCheck.passed()) {
+                meterRegistry.counter("bank.transfer.confirm", "result", "OTP_DENY").increment();
+                return new ConfirmResponse(false, otpCheck.message());
             }
         }
         // 真正的越权防线在 TransferService.confirmOrder：它按 confirm_id + memory_id 双条件查单，

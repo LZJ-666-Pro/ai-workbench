@@ -46,7 +46,7 @@ export interface OrderView {
   toAccount: string
   amount: number
   reason: string | null
-  status: 'PENDING' | 'EXECUTED' | 'CANCELLED' | 'REJECTED'
+  status: 'PENDING' | 'APPROVING' | 'EXECUTED' | 'CANCELLED' | 'REJECTED'
   createdAt: string
 }
 

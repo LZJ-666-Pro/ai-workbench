@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { getMemoryId, newMemoryId, respondTransferConfirm, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions, listIdentities, getIdentity, setIdentity, fetchTransferOrders, fetchTransferReceipt } from '../api/chat'
+import { getMemoryId, newMemoryId, respondTransferConfirm, sendTransferOtp, streamChat, listSessions, loadHistoryMessages, deleteSession, cacheMessages, readCachedMessages, cacheSessions, readCachedSessions, listIdentities, getIdentity, setIdentity, fetchTransferOrders, fetchTransferReceipt } from '../api/chat'
 import type { ConfirmRequestData, IdentityInfo, TransferReceipt } from '../api/chat'
 
 export interface Suggestion {
@@ -45,13 +45,21 @@ const emit = defineEmits<{
 }>()
 
 interface CardMsg extends ConfirmRequestData {
-  status: 'pending' | 'processing' | 'confirmed' | 'cancelled'
+  status: 'pending' | 'processing' | 'confirmed' | 'cancelled' | 'approving'
   /** 有效期截止（epoch 毫秒）：SSE 流里推的卡片没有，恢复接口带回，用于倒计时与过期置灰 */
   expiresAt?: number
   /** 支付密码输入（仅确认时需要，二次验证因子；演示桩固定 123456） */
   payPwd?: string
   /** 支付密码校验的行内错误提示 */
   payError?: string
+  /** 短信验证码输入（确认的第二因子：验证「持有」） */
+  otpCode?: string
+  /** 发码/校验的行内错误提示（与支付密码错误分开，避免互相顶掉） */
+  otpError?: string
+  /** 发码成功时间 + 60s 限流窗口：配合 nowTick 每秒渲染重发倒计时 */
+  otpReadyAt?: number
+  /** 演示环境后端回显的验证码提示（生产走短信通道后删除） */
+  otpDemo?: string
 }
 
 interface Msg {
@@ -359,8 +367,12 @@ async function send() {
         reply.content += traceId ? `\n[错误] ${msg}（编号 ${traceId}）` : `\n[错误] ${msg}`
       },
       onConfirmRequest: (card) => {
-        // 转账确认卡片（human-in-the-loop）：模型只创建待确认单，用户在卡片上确认后资金才变动
-        messages.value.push({ role: 'assistant', kind: 'card', content: '', card: { ...card, status: 'pending' } })
+        // 转账确认卡片（human-in-the-loop）：模型只创建待确认单，用户在卡片上确认后资金才变动。
+        // APPROVING（大额审批中）渲染成仅可取消的卡片，避免用户白填双因子后才发现确认不了
+        messages.value.push({
+          role: 'assistant', kind: 'card', content: '',
+          card: { ...card, status: card.orderStatus === 'APPROVING' ? 'approving' : 'pending' },
+        })
         scrollBottom()
       },
     })
@@ -396,7 +408,9 @@ async function restorePendingCards() {
     let added = false
     for (const o of orders) {
       if (known.has(o.confirmId)) continue
-      const status = o.status === 'EXECUTED' ? 'confirmed' : 'pending'
+      // APPROVING（大额审批中）也要恢复：只有取消按钮，确认要等银行放行
+      const status = o.status === 'EXECUTED' ? 'confirmed'
+        : o.status === 'APPROVING' ? 'approving' : 'pending'
       // 逐字段构造而非展开：后端 EXECUTED 单的 expiresAt/bankRef 为 null，
       // 直接展开会把 null 塞进 expiresAt 让 cardExpired 的 undefined 判断失效
       messages.value.push({
@@ -427,33 +441,67 @@ function ttlText(card: CardMsg): string {
 }
 
 /** 确认卡片操作：调后端确认接口，结果以普通消息回显。
- *  确认（执行）需要支付密码——资金变动的二次验证因子；取消不涉及资金，无需密码 */
+ *  确认（执行）需要双因子——支付密码（验证「知道」）+ 短信验证码（验证「持有」）；
+ *  取消不涉及资金，无需任何因子。APPROVING 单已提交人工审批，只能取消不能确认 */
 async function respondCard(card: CardMsg, action: 'confirm' | 'cancel') {
-  if (card.status !== 'pending') return
+  if (action === 'confirm' && card.status !== 'pending') return
+  if (action === 'cancel' && card.status !== 'pending' && card.status !== 'approving') return
   card.payError = ''
-  if (action === 'confirm' && !(card.payPwd ?? '').trim()) {
-    card.payError = '请输入支付密码'
-    return
+  if (action === 'confirm') {
+    if (!(card.payPwd ?? '').trim()) {
+      card.payError = '请输入支付密码'
+      return
+    }
+    if (!(card.otpCode ?? '').trim()) {
+      card.payError = '请先获取并输入短信验证码'
+      return
+    }
   }
+  // 记住进入 processing 前的状态：失败要回退（APPROVING 单取消失败要回到审批中，不能误回待确认）
+  const restoreStatus = card.status
   card.status = 'processing'
   try {
     const res = await respondTransferConfirm(
-      props.basePath, memoryId, card.confirmId, action, card.payPwd)
+      props.basePath, memoryId, card.confirmId, action, card.payPwd, card.otpCode)
     if (res.ok) {
       card.status = action === 'confirm' ? 'confirmed' : 'cancelled'
       messages.value.push({ role: 'assistant', kind: 'text', content: res.message })
     } else {
-      // ok=false（密码错误 / 已过期 / 风控拦截）：单据回 pending 可重试，
-      // 确认失败的错误挂在密码框下方行内展示，取消失败走消息回显
-      card.status = 'pending'
+      // ok=false（密码/验证码错误 / 已过期 / 审批拦截）：单据回原状态可重试，
+      // 确认失败的错误行内展示，取消失败走消息回显
+      card.status = restoreStatus
       if (action === 'confirm') card.payError = res.message
       else messages.value.push({ role: 'assistant', kind: 'text', content: res.message })
     }
   } catch (e) {
-    card.status = 'pending'
+    card.status = restoreStatus
     card.payError = e instanceof Error ? e.message : String(e)
   }
   scrollBottom()
+}
+
+/** 发送短信验证码：演示环境无短信通道，demoCode 由后端回显提示；
+ *  60 秒限流窗口内重复请求会被后端拒绝，按钮倒计时与其对齐 */
+async function sendOtp(card: CardMsg) {
+  if (otpLeft(card) > 0 || card.status !== 'pending') return
+  card.otpError = ''
+  try {
+    const res = await sendTransferOtp(props.basePath, memoryId, card.confirmId)
+    if (res.ok) {
+      card.otpReadyAt = Date.now() + 60_000
+      card.otpDemo = res.demoCode ? `演示验证码：${res.demoCode}（生产环境经短信下发）` : '验证码已发送，请注意查收'
+    } else {
+      card.otpError = res.message
+    }
+  } catch (e) {
+    card.otpError = e instanceof Error ? e.message : String(e)
+  }
+}
+
+/** 验证码重发剩余秒数（0 = 可发/未发过）；复用 nowTick 每秒心跳驱动渲染 */
+function otpLeft(card: CardMsg): number {
+  if (!card.otpReadyAt) return 0
+  return Math.max(0, Math.ceil((card.otpReadyAt - nowTick.value) / 1000))
 }
 
 // ---------- 电子回单：确认成功后的凭证查看 ----------
@@ -698,15 +746,21 @@ function formatTime(timestamp: string): string {
             <div class="bubble">
               <template v-if="m.kind === 'card' && m.card">
                 <div class="card-head">
-                  <span class="card-icon">💸</span>
-                  <span>待确认转账</span>
+                  <span class="card-icon">{{ m.card.status === 'approving' ? '🏦' : '💸' }}</span>
+                  <span>{{ m.card.status === 'approving' ? '大额转账 · 银行审批中' : '待确认转账' }}</span>
                 </div>
                 <div class="card-amount">¥{{ m.card.amount.toFixed(2) }}</div>
                 <div class="card-row"><span class="k">收款人</span><span>{{ m.card.toOwner }}（{{ m.card.toAccount }}）</span></div>
                 <div class="card-row"><span class="k">付款账户</span><span>{{ m.card.fromAccount }}</span></div>
                 <div v-if="m.card.reason" class="card-row"><span class="k">附言</span><span>{{ m.card.reason }}</span></div>
-                <div v-if="m.card.status === 'pending' && !cardExpired(m.card)" class="card-actions-wrap">
-                  <!-- 支付密码：资金确认的二次验证因子（演示桩：123456） -->
+                <div v-if="m.card.status === 'approving'" class="card-actions-wrap">
+                  <p class="approving-tip">该笔转账金额较大，已提交银行人工审批。审批通过后需完成支付密码与短信验证码双重确认方可执行，审批期间单子不会过期。</p>
+                  <div class="card-actions">
+                    <button class="ghost" @click="respondCard(m.card, 'cancel')">取消转账</button>
+                  </div>
+                </div>
+                <div v-else-if="m.card.status === 'pending' && !cardExpired(m.card)" class="card-actions-wrap">
+                  <!-- 双因子确认：支付密码验证「知道」+ 短信验证码验证「持有」（演示桩：密码 123456、验证码后端回显） -->
                   <div class="card-pay">
                     <input
                       v-model="m.card.payPwd"
@@ -720,6 +774,22 @@ function formatTime(timestamp: string): string {
                     />
                     <span class="pay-hint">演示支付密码 123456</span>
                   </div>
+                  <div class="card-pay">
+                    <input
+                      v-model="m.card.otpCode"
+                      class="pay-input"
+                      inputmode="numeric"
+                      maxlength="6"
+                      placeholder="请输入短信验证码"
+                      autocomplete="off"
+                      @keydown.enter.prevent="respondCard(m.card, 'confirm')"
+                    />
+                    <button class="otp-send" :disabled="otpLeft(m.card) > 0" @click="sendOtp(m.card)">
+                      {{ otpLeft(m.card) > 0 ? `${otpLeft(m.card)}s 后重发` : '发送验证码' }}
+                    </button>
+                  </div>
+                  <p v-if="m.card.otpDemo" class="otp-demo">{{ m.card.otpDemo }}</p>
+                  <p v-if="m.card.otpError" class="pay-error">{{ m.card.otpError }}</p>
                   <p v-if="m.card.payError" class="pay-error">{{ m.card.payError }}</p>
                   <div class="card-actions">
                     <button class="primary" @click="respondCard(m.card, 'confirm')">确认转账</button>
@@ -1633,6 +1703,44 @@ function formatTime(timestamp: string): string {
   margin: 6px 0 0;
   font-size: 12px;
   color: #e5484d;
+}
+
+/* 发码按钮：与验证码输入框同排，60s 限流倒计时期间置灰 */
+.otp-send {
+  flex-shrink: 0;
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.2s;
+}
+
+.otp-send:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+/* 演示验证码回显提示：比普通 hint 更醒目一点，方便演示时抄码 */
+.otp-demo {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #b45309;
+}
+
+/* 审批中横幅：低饱和底色 + 说明文案，弱于报错、强于普通提示 */
+.approving-tip {
+  margin: 0;
+  padding: 9px 13px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #8a6d1f;
+  background: #fdf8ec;
 }
 
 /* 已确认卡片上的回单入口 */

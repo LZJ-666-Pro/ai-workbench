@@ -134,12 +134,15 @@ public class BankAdminController {
         if (order == null) {
             return ResponseEntity.notFound().build();
         }
-        if (!"PENDING".equals(order.status())) {
+        if (!"PENDING".equals(order.status()) && !"APPROVING".equals(order.status())) {
             return ResponseEntity.ok(new AdminDtos.AdminDecision(id, order.status(),
                     "订单 #%d 已处理（%s），无需审批".formatted(id, order.status())));
         }
-        TransferService.TransferResult result =
-                transferService.confirmOrder(order.memoryId(), order.confirmId(), approve);
+        // 大额审批档位：APPROVING 单通过 = 回到 PENDING 交还用户确认（审批不代用户碰钱）；
+        // PENDING 单（小额兜底 / 审批放行后的单）维持原语义：通过即执行划款
+        TransferService.TransferResult result = "APPROVING".equals(order.status())
+                ? transferService.reviewApproving(order.memoryId(), order.confirmId(), approve)
+                : transferService.confirmOrder(order.memoryId(), order.confirmId(), approve);
         String action = approve ? "通过" : "驳回";
         audit.record("admin:console", "admin.approval",
                 "管理端%s订单 #%d: %s -> %s, %.2f 元".formatted(action, id,

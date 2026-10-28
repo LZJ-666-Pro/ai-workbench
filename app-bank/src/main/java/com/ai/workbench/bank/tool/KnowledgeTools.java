@@ -2,9 +2,11 @@ package com.ai.workbench.bank.tool;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.ai.workbench.bank.audit.ToolAuditLogger;
+import com.ai.workbench.core.kb.HybridSearchService;
 import com.ai.workbench.core.kb.TextIndexer;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -14,9 +16,10 @@ import org.springframework.stereotype.Component;
 /**
  * 业务知识检索工具：小银的制度/费率/流程类咨询接平台知识库（RAG）。
  *
- * 数据源直接复用 platform-core 的 kb_* 表与 TextIndexer（bigram 关键词召回，两个模块
- * 同库同容器，不需要跨服务调用）。检索哪些空间由 kb_binding 决定——运营在知识库管理页
- * 把空间绑定给银行助手（agent_key='bank'）即生效，换语料、加文档都不用改代码。
+ * 数据源直接复用 platform-core 的 kb_* 表与混合检索服务（关键词 + 向量语义双路
+ * RRF 融合，embedding 未启用时自动退化为纯关键词，两个模块同库同容器，不需要跨
+ * 服务调用）。检索哪些空间由 kb_binding 决定——运营在知识库管理页把空间绑定给
+ * 银行助手（agent_key='bank' 或 'bank:身份'）即生效，换语料、加文档都不用改代码。
  *
  * 工具只读不写，且对三种身份（零售/员工/对公）一视同仁：制度条文不是客户敏感数据，
  * 员工做业务咨询同样需要。检索结果作为「引用依据」返回，要求模型注明出处、查不到就如实说，
@@ -32,12 +35,12 @@ public class KnowledgeTools {
     private static final String AGENT_KEY = "bank";
 
     private final JdbcTemplate jdbc;
-    private final TextIndexer indexer;
+    private final HybridSearchService hybrid;
     private final ToolAuditLogger audit;
 
-    public KnowledgeTools(JdbcTemplate jdbc, TextIndexer indexer, ToolAuditLogger audit) {
+    public KnowledgeTools(JdbcTemplate jdbc, HybridSearchService hybrid, ToolAuditLogger audit) {
         this.jdbc = jdbc;
-        this.indexer = indexer;
+        this.hybrid = hybrid;
         this.audit = audit;
     }
 
@@ -69,7 +72,8 @@ public class KnowledgeTools {
                     (rs, i) -> new TextIndexer.Candidate(rs.getLong("doc_id"), rs.getString("doc_title"),
                             rs.getInt("seq"), rs.getString("content"), rs.getBoolean("enabled")),
                     spaceIds.toArray());
-            List<TextIndexer.Hit> hits = indexer.search(question, candidates, TOP_N);
+            List<TextIndexer.Hit> hits = hybrid.search(
+                    question, candidates, Set.copyOf(spaceIds), TOP_N);
             if (hits.isEmpty()) {
                 audit.record(memoryId, "searchKnowledge", "未命中: " + question, "SUCCESS");
                 return "知识库中未检索到与该问题相关的内容。请如实告知用户暂无相关知识，不要编造。";
