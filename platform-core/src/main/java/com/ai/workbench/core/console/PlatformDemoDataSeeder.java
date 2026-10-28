@@ -418,11 +418,64 @@ public class PlatformDemoDataSeeder implements ApplicationRunner {
     // ------------------------------------------------------------------
 
     private void seedKnowledgeSpaces() {
-        if (count("kb_space") > 0) {
-            return;
+        // 旧版绑定无身份维度（agent_key='bank' 为全域）。知识检索引入身份区分后，
+        // 全域绑定会让对公客户检索到零售制度的答案——收敛为零售身份；
+        // 先转换后清理：撞唯一键转换失败的旧行直接删掉（更精确的编码行已存在）
+        jdbc.update("UPDATE IGNORE kb_binding SET agent_key = 'bank:RETAIL' WHERE agent_key = 'bank'");
+        jdbc.update("DELETE FROM kb_binding WHERE agent_key = 'bank'");
+        // 按空间名幂等补种：老库已有零售库时也能补上后续新增的空间（如对公制度库）
+        for (Object[] space : SPACES) {
+            String name = (String) space[0];
+            Long exists = jdbc.queryForObject("SELECT COUNT(*) FROM kb_space WHERE name = ?", Long.class, name);
+            if (exists != null && exists > 0) {
+                continue;
+            }
+            seedOneSpace(name, (String) space[1], (String[][]) space[2], (String[]) space[3]);
         }
-        // 每篇文档的正文写成真实制度/说明文本：切片与检索打分都按真实数据走
-        Object[][] spaces = {
+    }
+
+    private void seedOneSpace(String name, String description, String[][] docs, String[] bindings) {
+        jdbc.update("""
+                INSERT INTO kb_space (name, description, status, chunk_size, chunk_overlap, owner)
+                VALUES (?, ?, 'BUILDING', 500, 50, 'admin')
+                """, name, description);
+        Long spaceId = jdbc.queryForObject("SELECT id FROM kb_space WHERE name = ?", Long.class, name);
+        int docCount = 0;
+        int chunkTotal = 0;
+        for (String[] doc : docs) {
+            String content = doc[1].trim();
+            List<TextIndexer.Chunk> chunks = indexer.chunk(content, 500, 50);
+            jdbc.update("""
+                    INSERT INTO kb_document
+                        (space_id, title, doc_type, size_kb, words, chunks, status, enabled, content, owner)
+                    VALUES (?, ?, 'md', ?, ?, ?, 'READY', 1, ?, 'admin')
+                    """, spaceId, doc[0], Math.max(content.length() / 1024, 1),
+                    content.length(), chunks.size(), content);
+            Long docId = jdbc.queryForObject(
+                    "SELECT id FROM kb_document WHERE space_id = ? ORDER BY id DESC LIMIT 1", Long.class, spaceId);
+            jdbc.batchUpdate(
+                    "INSERT INTO kb_chunk (space_id, doc_id, seq, content, words) VALUES (?, ?, ?, ?, ?)",
+                    chunks.stream()
+                            .map(c -> new Object[]{spaceId, docId, c.seq(), c.content(), c.words()})
+                            .toList());
+            docCount++;
+            chunkTotal += chunks.size();
+        }
+        for (String agentKey : bindings) {
+            jdbc.update("INSERT IGNORE INTO kb_binding (space_id, agent_key) VALUES (?, ?)", spaceId, agentKey);
+        }
+        jdbc.update("""
+                UPDATE kb_space SET status = 'READY', doc_count = ?, chunk_total = ? WHERE id = ?
+                """, docCount, chunkTotal, spaceId);
+        log.info("工作台演示数据：写入知识库「{}」（{} 篇文档 / {} 个切片）", name, docCount, chunkTotal);
+    }
+
+    /**
+     * 演示知识库语料。绑定 agent_key 支持 agent[:identity] 编码：
+     * bank:RETAIL=仅零售会话可检索、bank:STAFF=仅员工、bank:CORPORATE=仅对公、bank=全域。
+     * 空间内容与身份匹配——对公客户问对公制度不该召回零售制度的答案。
+     */
+    private static final Object[][] SPACES = {
                 {"零售业务制度库", "个人银行业务制度、流程与风控要点的统一知识底座",
                         new String[][]{
                                 {"个人账户转账限额制度", """
@@ -473,7 +526,7 @@ public class PlatformDemoDataSeeder implements ApplicationRunner {
                                         相关记录保存期限不少于五年。
                                         """},
                         },
-                        new String[]{"bank"}},
+                        new String[]{"bank:RETAIL", "bank:STAFF"}},
                 {"产品知识库", "智汇工作台平台功能说明与使用指引",
                         new String[][]{
                                 {"智汇工作台产品概述", """
@@ -499,44 +552,43 @@ public class PlatformDemoDataSeeder implements ApplicationRunner {
                                         """},
                         },
                         new String[]{"knowledge"}},
+                {"对公业务制度库", "对公账户、结算与付款业务的制度与操作指引",
+                        new String[][]{
+                                {"对公结算账户管理办法", """
+                                        第一条 企业申请开立基本存款账户，须提供营业执照原件、
+                                        法定代表人身份证件及经办人身份证件与授权书，开户资料当日录入系统。
+
+                                        第二条 账户实行备案制管理，开立完成即可对外收付款项，
+                                        一般存款账户不得办理现金支取业务。
+
+                                        第三条 企业账户不得出租、出借、出售给他人使用；
+                                        发现违规使用的，银行有权中止该账户非柜面业务并上报监管。
+
+                                        第四条 企业名称、法定代表人等注册信息变更的，
+                                        应在 30 日内办理账户信息变更，逾期未办理的账户暂停对外支付。
+
+                                        第五条 账户连续一年未发生收付活动的，转为久悬账户，
+                                        恢复使用须核实企业存续状态后办理解除手续。
+                                        """},
+                                {"对公大额付款操作流程", """
+                                        一、复核要求：对公单笔付款 50 万元以上须经两名复核人员
+                                        依次审核付款要素（收款户名、账号、金额、用途）后方可提交。
+
+                                        二、通道选择：单笔 5 万元以上的行内转账走大额支付系统，
+                                        工作日 8:30 至 17:00 实时到账，日切后提交的顺延至下一工作日处理。
+
+                                        三、用途管理：付款附言须填写真实业务用途（合同号或货款说明），
+                                        用途为「往来款」且金额超过 100 万元的，须补充提供合同要素。
+
+                                        四、退汇处理：收款行退回的款项原路退回付款账户，
+                                        会计当日生成退汇报文，客户经理须在两个工作日内告知客户退汇原因。
+
+                                        五、凭证获取：付款成功后系统自动生成电子回单，
+                                        客户可在对公网银或通过银行助手查询并下载。
+                                        """},
+                        },
+                        new String[]{"bank:CORPORATE"}},
         };
-        for (Object[] space : spaces) {
-            String name = (String) space[0];
-            jdbc.update("""
-                    INSERT INTO kb_space (name, description, status, chunk_size, chunk_overlap, owner)
-                    VALUES (?, ?, 'BUILDING', 500, 50, 'admin')
-                    """, name, space[1]);
-            Long spaceId = jdbc.queryForObject("SELECT id FROM kb_space WHERE name = ?", Long.class, name);
-            int docs = 0;
-            int chunkTotal = 0;
-            for (String[] doc : (String[][]) space[2]) {
-                String content = doc[1].trim();
-                List<TextIndexer.Chunk> chunks = indexer.chunk(content, 500, 50);
-                jdbc.update("""
-                        INSERT INTO kb_document
-                            (space_id, title, doc_type, size_kb, words, chunks, status, enabled, content, owner)
-                        VALUES (?, ?, 'md', ?, ?, ?, 'READY', 1, ?, 'admin')
-                        """, spaceId, doc[0], Math.max(content.length() / 1024, 1),
-                        content.length(), chunks.size(), content);
-                Long docId = jdbc.queryForObject(
-                        "SELECT id FROM kb_document WHERE space_id = ? ORDER BY id DESC LIMIT 1", Long.class, spaceId);
-                jdbc.batchUpdate(
-                        "INSERT INTO kb_chunk (space_id, doc_id, seq, content, words) VALUES (?, ?, ?, ?, ?)",
-                        chunks.stream()
-                                .map(c -> new Object[]{spaceId, docId, c.seq(), c.content(), c.words()})
-                                .toList());
-                docs++;
-                chunkTotal += chunks.size();
-            }
-            for (String agent : (String[]) space[3]) {
-                jdbc.update("INSERT IGNORE INTO kb_binding (space_id, agent_key) VALUES (?, ?)", spaceId, agent);
-            }
-            jdbc.update("""
-                    UPDATE kb_space SET status = 'READY', doc_count = ?, chunk_total = ? WHERE id = ?
-                    """, docs, chunkTotal, spaceId);
-            log.info("工作台演示数据：写入知识库「{}」（{} 篇文档 / {} 个切片）", name, docs, chunkTotal);
-        }
-    }
 
     // ------------------------------------------------------------------
 

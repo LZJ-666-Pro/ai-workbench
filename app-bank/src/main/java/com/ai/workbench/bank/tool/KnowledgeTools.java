@@ -1,5 +1,6 @@
 package com.ai.workbench.bank.tool;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -27,6 +28,9 @@ public class KnowledgeTools {
     /** 每次返回的命中切片数：太多会稀释上下文，银行制度条文一段足够回答一个问题 */
     private static final int TOP_N = 3;
 
+    /** 本工具的 Agent 标识；绑定表里支持 agent[:identity] 编码（见 bindingVisible） */
+    private static final String AGENT_KEY = "bank";
+
     private final JdbcTemplate jdbc;
     private final TextIndexer indexer;
     private final ToolAuditLogger audit;
@@ -42,11 +46,17 @@ public class KnowledgeTools {
     public String searchKnowledge(@P("要咨询的业务问题，如「新开账户多久能提升转账限额」") String question) {
         String memoryId = ToolCallContext.currentMemoryId();
         try {
-            // 检索范围 = 绑定给银行助手的空间。空间 id 来自库表而非配置文件：
+            // 检索范围 = 绑定给银行助手、且对当前身份可见的空间。空间 id 来自库表而非配置文件：
             // kb_binding 是平台知识库的既有绑定机制，运营改绑定立即生效
-            List<Long> spaceIds = jdbc.query(
-                    "SELECT space_id FROM kb_binding WHERE agent_key = 'bank'",
-                    (rs, i) -> rs.getLong(1));
+            List<Long> spaceIds = new ArrayList<>();
+            for (String[] binding : jdbc.query("""
+                    SELECT space_id, agent_key FROM kb_binding WHERE agent_key = ? OR agent_key LIKE ?
+                    """, (rs, i) -> new String[]{rs.getString("agent_key"), String.valueOf(rs.getLong("space_id"))},
+                    AGENT_KEY, AGENT_KEY + ":%")) {
+                if (bindingVisible(binding[0])) {
+                    spaceIds.add(Long.parseLong(binding[1]));
+                }
+            }
             if (spaceIds.isEmpty()) {
                 return "未配置可用的业务知识库，无法检索。请如实告知用户暂不支持该咨询。";
             }
@@ -76,5 +86,19 @@ public class KnowledgeTools {
         } catch (Exception e) {
             return "知识库检索异常，请告知用户稍后重试。";
         }
+    }
+
+    /**
+     * 绑定是否对当前身份可见：agent_key 支持 agent[:identity] 编码——
+     * 'bank' 是全域绑定（三种身份都能检索），'bank:RETAIL' 只有零售会话可见。
+     * 身份区分的价值：对公客户问「对公开户费率」不该召回零售制度的答案；
+     * 员工做咨询时绑到哪个库取决于运营，编码本身不限制。
+     */
+    private boolean bindingVisible(String agentKey) {
+        int sep = agentKey.indexOf(':');
+        if (sep < 0) {
+            return true;
+        }
+        return agentKey.substring(sep + 1).equals(ToolCallContext.currentIdentity().name());
     }
 }

@@ -19,7 +19,10 @@ const error = ref('')
 const loading = ref(false)
 
 const AGENT_LABELS: Record<string, string> = {
-  bank: '银行助手',
+  bank: '银行助手（全域）',
+  'bank:RETAIL': '银行助手 · 仅零售',
+  'bank:CORPORATE': '银行助手 · 仅对公',
+  'bank:STAFF': '银行助手 · 仅员工',
   knowledge: '个人知识库',
   interview: '面试模拟器',
 }
@@ -395,8 +398,14 @@ onMounted(load)
           <el-input v-model="form.description" type="textarea" :rows="2" maxlength="255" />
         </el-form-item>
         <el-form-item label="绑定 Agent">
+          <!-- 银行助手可按服务对象身份区分知识范围：绑定 retail 的空间只有零售会话检索得到 -->
           <el-select v-model="form.agents" multiple style="width: 100%">
-            <el-option value="bank" label="银行助手" />
+            <el-option-group label="银行助手">
+              <el-option value="bank" label="全域（所有身份）" />
+              <el-option value="bank:RETAIL" label="仅零售客户" />
+              <el-option value="bank:CORPORATE" label="仅对公客户" />
+              <el-option value="bank:STAFF" label="仅内部员工" />
+            </el-option-group>
             <el-option value="knowledge" label="个人知识库" />
             <el-option value="interview" label="面试模拟器" />
           </el-select>
