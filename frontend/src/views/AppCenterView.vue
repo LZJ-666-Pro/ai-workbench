@@ -15,6 +15,19 @@ const specVisible = ref(false)
 const workbench = ref<Workbench | null>(null)
 const error = ref('')
 
+/**
+ * 统计服务是否离线（区别于"统计报错"）：
+ * 工作台统计接口跑在 app-bank（8081）里，该服务未启动时 Vite 代理连不上目标直接回 500，
+ * fetch 阶段断网则抛 "Failed to fetch"。这两种情况是「后端不在」，不是「程序出错」——
+ * 卡片状态探测会把它标成"未启动"，这里若再弹 HTTP 500 的告警就成了噪音。
+ * 离线时降级为 info 提示条；真正的意外错误（如服务在跑但接口 500）才用 warning。
+ */
+const statsOffline = ref(false)
+
+function isOfflineError(message: string): boolean {
+  return /HTTP 5\d\d|Failed to fetch|fetch failed|NetworkError|load failed/i.test(message)
+}
+
 /** 视图偏好存本地：用户选了列表，刷新后不该变回卡片 */
 const VIEW_KEY = 'aiwb-app-view'
 const view = ref<'grid' | 'list'>((localStorage.getItem(VIEW_KEY) as 'grid' | 'list') || 'grid')
@@ -92,12 +105,15 @@ const runningCount = computed(() => apps.value.filter(a => a.status === 'running
 
 async function load() {
   error.value = ''
+  statsOffline.value = false
   // 状态探测与统计接口彼此独立：统计挂了也要能看出哪些应用在线
   void probeStatuses()
   try {
     workbench.value = await loadWorkbench()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '未知错误'
+    const message = e instanceof Error ? e.message : '未知错误'
+    statsOffline.value = isOfflineError(message)
+    error.value = message
   }
 }
 
@@ -152,8 +168,23 @@ onMounted(load)
         </div>
       </div>
 
+      <!-- 服务离线（未启动/断网）是预期场景：info 说明而非告警，避免"没起服务就像出了 bug"的误读 -->
       <el-alert
-        v-if="error"
+        v-if="error && statsOffline"
+        class="load-error"
+        type="info"
+        title="平台统计暂不可用：统计服务所在后端可能未启动"
+        description="统计接口由银行助手后端（8081）提供，该服务未启动时代理无法转发。指标显示 —，应用入口不受影响；启动服务后点击重试即可恢复。"
+        :closable="false"
+        show-icon
+      >
+        <template #default>
+          <el-button link type="primary" @click="load">重试</el-button>
+        </template>
+      </el-alert>
+
+      <el-alert
+        v-else-if="error"
         class="load-error"
         type="warning"
         :title="`统计数字加载失败：${error}`"

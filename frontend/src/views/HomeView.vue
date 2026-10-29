@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { OfficeBuilding, Collection, Microphone, ArrowRight } from '@element-plus/icons-vue'
+import {
+  OfficeBuilding, Collection, Microphone, ArrowRight,
+  ChatDotRound, Operation, CircleCheck, Monitor, Bell,
+} from '@element-plus/icons-vue'
 import { auth, roleLabel } from '../api/auth'
 import {
   loadWorkbench, notifications, probeAppRunning,
@@ -50,12 +53,12 @@ const TONE_OVERRIDE: Record<string, AppCard['tone']> = {
 
 const runningCount = computed(() => apps.value.filter(a => a.status === 'running').length)
 
-/** 今日概览四卡：数字全部来自接口，空态显示 0 / —，不编数字 */
+/** 今日概览四卡：数字全部来自接口，空态显示 0 / —，不编数字；图标是卡片的视觉锚点 */
 const overview = computed(() => [
-  { label: '今日总会话', value: platform.value.sessionsToday.toLocaleString(), hint: '全部应用的对话轮次' },
-  { label: '今日工具调用', value: platform.value.eventsToday.toLocaleString(), hint: 'Agent 触发的业务操作' },
-  { label: '平均成功率', value: `${platform.value.successRate}%`, hint: '按今日平台事件计算' },
-  { label: '运行中应用', value: `${runningCount.value} / ${apps.value.length}`, hint: '在线状态实时探测' },
+  { label: '今日总会话', value: platform.value.sessionsToday.toLocaleString(), hint: '全部应用的对话轮次', icon: ChatDotRound, tone: 'blue' },
+  { label: '今日工具调用', value: platform.value.eventsToday.toLocaleString(), hint: 'Agent 触发的业务操作', icon: Operation, tone: 'green' },
+  { label: '平均成功率', value: `${platform.value.successRate}%`, hint: '按今日平台事件计算', icon: CircleCheck, tone: 'violet' },
+  { label: '运行中应用', value: `${runningCount.value} / ${apps.value.length}`, hint: '在线状态实时探测', icon: Monitor, tone: 'cyan' },
 ])
 
 const greeting = computed(() => {
@@ -104,20 +107,30 @@ async function probeStatuses() {
     <ContextBar :hero="hero" />
 
     <div class="page-body">
-      <!-- 问候区：紧凑型（应用中心承载完整卡片区，这里只做入口与概览） -->
+      <!-- 页头：eyebrow 小字 + 问候；右侧环境绿点与数据时间（对齐原型两行右对齐） -->
       <div class="hello">
-        <h1 class="hello-title">
-          {{ greeting }}，{{ auth.user?.displayName ?? '访客' }}
-          <span class="hello-role">{{ roleLabel(auth.user?.platformRole) }}</span>
-        </h1>
-        <p class="hello-sub">{{ today }} · 从下面的入口开始今天的工作。</p>
+        <div class="hello-left">
+          <span class="eyebrow">工作台总览</span>
+          <h1 class="hello-title">
+            {{ greeting }}，{{ auth.user?.displayName ?? '访客' }}
+            <span class="hello-role">{{ roleLabel(auth.user?.platformRole) }}</span>
+          </h1>
+          <p class="hello-sub">{{ today }} · 从下面的入口开始今天的工作。</p>
+        </div>
+        <div class="hello-right">
+          <span class="env-chip"><i class="dot" />生产环境</span>
+          <span class="sync-chip">数据更新于 {{ platform.updatedAt }}</span>
+        </div>
       </div>
 
-      <!-- 今日概览 -->
+      <!-- 今日概览：图标+标签在上、大数字居中、副注在底（对齐原型纵排卡片） -->
       <div class="ov-grid">
         <div v-for="o in overview" :key="o.label" class="ov-card">
-          <span class="ov-value">{{ o.value }}</span>
-          <span class="ov-label">{{ o.label }}</span>
+          <div class="ov-top">
+            <span class="ov-icon" :class="o.tone"><el-icon><component :is="o.icon" /></el-icon></span>
+            <span class="ov-label">{{ o.label }}</span>
+          </div>
+          <span class="ov-value" :class="{ primary: o.tone === 'blue' }">{{ o.value }}</span>
           <span class="ov-hint">{{ o.hint }}</span>
         </div>
       </div>
@@ -126,7 +139,10 @@ async function probeStatuses() {
         <!-- 快捷入口 -->
         <div class="panel">
           <div class="panel-head">
-            <span class="panel-title">快捷入口</span>
+            <div class="panel-head-main">
+              <span class="panel-title">常用应用</span>
+              <span class="panel-desc">按角色分配的业务入口，点击直接进入</span>
+            </div>
             <el-button link type="primary" @click="router.push('/apps')">查看全部<el-icon class="go-icon"><ArrowRight /></el-icon></el-button>
           </div>
           <div v-for="app in apps" :key="app.key" class="entry" @click="router.push(app.to)">
@@ -145,10 +161,16 @@ async function probeStatuses() {
         <!-- 待办通知 -->
         <div class="panel">
           <div class="panel-head">
-            <span class="panel-title">待办与通知</span>
+            <div class="panel-head-main">
+              <span class="panel-title">待办与通知</span>
+              <span class="panel-desc">需要你关注的事项</span>
+            </div>
           </div>
-          <div v-if="!notifications.length" class="entry empty">
-            <span class="empty-dot" />暂无待处理事项
+          <div v-if="!notifications.length" class="empty-state">
+            <span class="empty-bell"><el-icon><Bell /></el-icon></span>
+            <div class="empty-title">暂无待处理事项</div>
+            <div class="empty-sub">新的审批、提醒会出现在这里</div>
+            <el-button class="empty-btn" plain size="small" @click="router.push('/logs')">查看全部通知</el-button>
           </div>
           <div v-for="(n, i) in notifications" :key="i" class="entry notif" @click="n.to && router.push(n.to)">
             <span class="notif-dot" :class="{ warn: n.level === 'warn' }" />
@@ -187,8 +209,20 @@ async function probeStatuses() {
   padding: 22px 24px 26px;
 }
 
-/* 问候区 */
-.hello { margin: 2px 0 18px; }
+/* 页头：eyebrow 分区锚点 + 右侧环境信息，底部不画线（统计卡的分隔已足够） */
+.hello {
+  margin: 2px 0 20px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+.eyebrow {
+  display: inline-block;
+  font-size: 12.5px;
+  color: #8a97a8;
+  margin-bottom: 8px;
+}
 .hello-title {
   margin: 0;
   font-size: 24px;
@@ -211,40 +245,82 @@ async function probeStatuses() {
   font-size: 13px;
   color: #8a97a8;
 }
+.hello-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  padding-bottom: 6px;
+  flex-shrink: 0;
+}
+/* 原型：绿点绿字无底框 + 下方灰字数据时间 */
+.env-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0a8f3c;
+}
+.env-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: #0a8f3c; }
+.sync-chip {
+  font-size: 12px;
+  color: #98a2b0;
+}
 
-/* 今日概览四卡 */
+/* 今日概览：图标+标签一行、大数字、副注（纵排对齐原型） */
 .ov-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 18px;
+  gap: 16px;
+  margin-bottom: 20px;
 }
 .ov-card {
   background: #fff;
-  border: 1px solid #e5e8ec;
-  border-radius: 10px;
-  padding: 16px 18px;
+  border: 1px solid #e8ecf1;
+  border-radius: 12px;
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 2px 8px rgba(31, 45, 61, 0.04);
+}
+.ov-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.ov-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 17px;
+}
+.ov-icon.blue { background: #e3eefb; color: #1f6fd6; }
+.ov-icon.green { background: #e2f6ed; color: #047857; }
+.ov-icon.violet { background: #efe8fd; color: #6d28d9; }
+.ov-icon.cyan { background: #e0f4f8; color: #0e7490; }
+.ov-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2d3d;
 }
 .ov-value {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 800;
   color: #1f2d3d;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
 }
-.ov-label {
-  font-size: 13px;
-  color: #4a5a6d;
-  font-weight: 600;
-  margin-top: 4px;
-}
+.ov-value.primary { color: #1f6fd6; }
 .ov-hint {
-  font-size: 11.5px;
+  font-size: 12px;
   color: #98a2b0;
-  margin-top: 2px;
+  margin-top: 6px;
 }
 
 /* 双栏面板 */
@@ -256,36 +332,48 @@ async function probeStatuses() {
 }
 .panel {
   background: #fff;
-  border: 1px solid #e5e8ec;
-  border-radius: 10px;
-  padding: 16px 18px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  border: 1px solid #e8ecf1;
+  border-radius: 14px;
+  padding: 18px 20px;
+  box-shadow: 0 2px 8px rgba(31, 45, 61, 0.04);
 }
 .panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f2f4f7;
 }
+.panel-head-main { display: flex; flex-direction: column; min-width: 0; }
 .panel-title {
   font-size: 15px;
   font-weight: 700;
   color: #1f2d3d;
 }
+.panel-desc {
+  font-size: 12px;
+  color: #98a2b0;
+  margin-top: 2px;
+}
 .go-icon { font-size: 12px; }
 
-/* 快捷入口行 */
+/* 快捷入口行：灰底圆角条（对齐原型，行间留 gap，不再是分隔线列表） */
 .entry {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 6px;
-  border-bottom: 1px solid #f2f4f7;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: #f7f8fa;
+  border: 1px solid transparent;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 10px;
+  transition: background 0.15s, border-color 0.15s;
 }
-.entry:last-child { border-bottom: 0; }
-.entry:hover { background: #f7fafd; }
+.entry:last-child { margin-bottom: 0; }
+.entry:hover { background: #eef4fb; border-color: #d8e6f5; }
 .entry-main { flex: 1; min-width: 0; }
 .entry-name {
   font-size: 14.5px;
@@ -309,9 +397,9 @@ async function probeStatuses() {
   flex-shrink: 0;
   font-size: 19px;
 }
-.app-tile.blue { background: linear-gradient(135deg, #e3eefb, #d2e4f7); color: #0b4f9e; }
-.app-tile.violet { background: linear-gradient(135deg, #efe8fd, #e2d8fa); color: #6d28d9; }
-.app-tile.green { background: linear-gradient(135deg, #e2f6ed, #d0efe0); color: #047857; }
+.app-tile.blue { background: #e3eefb; color: #0b4f9e; }
+.app-tile.violet { background: #efe8fd; color: #6d28d9; }
+.app-tile.green { background: #e2f6ed; color: #047857; }
 
 /* 状态点样式（与快捷入口行内） */
 .status {
@@ -348,18 +436,44 @@ async function probeStatuses() {
   color: #34455c;
   line-height: 1.6;
 }
-.entry.empty {
-  color: #98a2b0;
-  font-size: 13px;
-  cursor: default;
-  justify-content: center;
-  padding: 22px 0;
+/* 空态：大紫色圆底铃铛 + 主副文案 + 操作按钮（对齐原型） */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 30px 0 26px;
 }
-.empty-dot {
-  width: 7px;
-  height: 7px;
+.empty-bell {
+  width: 84px;
+  height: 84px;
   border-radius: 50%;
-  background: #d5dae1;
+  background: #efe8fd;
+  color: #8b5cf6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  margin-bottom: 16px;
+}
+.empty-title {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #1f2d3d;
+}
+.empty-sub {
+  font-size: 12.5px;
+  color: #98a2b0;
+  margin-top: 4px;
+}
+.empty-btn {
+  margin-top: 14px;
+  color: #0b4f9e;
+  border-color: #9fc0e4;
+}
+.empty-btn:hover {
+  background: #eaf2fb;
+  border-color: #0b4f9e;
+  color: #0b4f9e;
 }
 
 @media (max-width: 1000px) {

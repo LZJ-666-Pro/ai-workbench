@@ -55,6 +55,12 @@
             </el-menu-item>
           </el-menu-item-group>
         </el-menu>
+        <!-- 返回银行助手应用：与知识库后台（KbAdminLayout）入口对齐，后台是治理面，出口始终指回聊天应用 -->
+        <div class="admin-back">
+          <el-button link @click="$router.push('/bank')">
+            <el-icon><Back /></el-icon><span>返回银行助手</span>
+          </el-button>
+        </div>
       </el-aside>
       <el-main class="admin-main">
         <RouterView />
@@ -66,7 +72,7 @@
 <script setup lang="ts">
 import {
   Odometer, User, Wallet, Money, DocumentChecked, CreditCard,
-  Lock, Setting, Document, TrendCharts, MapLocation, UserFilled,
+  Lock, Setting, Document, TrendCharts, MapLocation, UserFilled, Back,
 } from '@element-plus/icons-vue'
 </script>
 
@@ -91,6 +97,9 @@ import {
 .admin-aside {
   background: #0e2a4d;
   overflow-y: auto;
+  /* 纵向 flex：菜单占据剩余高度，返回入口固定在侧栏底部（与 KbAdminLayout 一致） */
+  display: flex;
+  flex-direction: column;
 }
 
 .admin-brand {
@@ -107,6 +116,7 @@ import {
 
 .admin-aside :deep(.el-menu) {
   border-right: none;
+  flex: 1;
 }
 
 .admin-aside :deep(.el-menu-item-group__title) {
@@ -124,6 +134,26 @@ import {
 .admin-aside :deep(.el-menu-item .el-icon) {
   color: inherit;
   margin-right: 8px;
+}
+
+/* 返回入口：样式与知识库后台返回按钮一致 */
+.admin-back {
+  padding: 14px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.admin-back .el-button {
+  color: #a8bcd4;
+  font-size: 13px;
+}
+
+.admin-back .el-button:hover {
+  color: #fff;
+}
+
+.admin-back .el-icon {
+  margin-right: 6px;
 }
 
 .admin-main {
