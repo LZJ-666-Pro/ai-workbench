@@ -1,7 +1,6 @@
 package com.ai.workbench.core.kb;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,9 +36,11 @@ import org.springframework.web.multipart.MultipartFile;
  *   POST   /api/kb/spaces/{id}/rebuild           重建索引（全量重切）
  *   POST   /api/kb/spaces/{id}/search            检索测试（关键词 + 向量语义混合召回）
  *
- * MVP 诚实边界：txt/md/csv 真实提取、真实切片；pdf/docx 上传后如实标 FAILED
- * （文本提取引擎第二期接入）；检索默认关键词召回，embedding 打开时自动升级为
- * 混合检索（HybridSearchService 双路 RRF 融合）。空间状态由文档状态实时派生。
+ * MVP 诚实边界：txt/md/csv/pdf/doc/docx/html/htm 全部经 Tika 真实提取、真实切片；
+ * 扫描版 PDF 等提不出正文的如实标 FAILED（不造假）；检索默认关键词召回，
+ * embedding 打开时自动升级为混合检索（HybridSearchService 双路 RRF 融合）。
+ * 空间状态由文档状态实时派生。入库/重切/级联删除的持久化逻辑在 KbDocService，
+ * 与个人知识库（app-knowledge 批次）共用同一套链路。
  */
 @RestController
 @RequestMapping("/api/kb")
@@ -47,6 +48,12 @@ public class KbController {
 
     /** 混合检索入口：embedding 未启用时内部退化为纯关键词，本控制器不感知差异 */
     private final HybridSearchService hybrid;
+
+    /** 文档抽取引擎（Tika）：多格式统一提正文 */
+    private final DocumentExtractor extractor;
+
+    /** 文档持久化与索引同步：上传/删除/重建都委托它，个人库复用同一实现 */
+    private final KbDocService docService;
 
     public record SpaceView(long id, String name, String description, String status,
                             int chunkSize, int chunkOverlap, int docCount, int chunkTotal,
@@ -73,17 +80,21 @@ public class KbController {
     public record UpdateEnabledRequest(boolean enabled) {
     }
 
-    private static final Set<String> TEXT_TYPES = Set.of("txt", "md", "csv");
-    private static final Set<String> ALL_TYPES = Set.of("txt", "md", "csv", "pdf", "docx");
+    /**
+     * 上传允许的扩展名：与 DocumentExtractor.SUPPORTED 保持一致（txt/md/csv 直读，
+     * 其余 Tika 解析）。doc/html/htm 是本次新增允许项。
+     */
+    private static final Set<String> ALL_TYPES = Set.of("txt", "md", "csv", "pdf", "doc", "docx", "html", "htm");
     private static final Set<String> AGENT_KEYS = Set.of("bank", "knowledge", "interview");
     private static final int MAX_DOCS_PER_UPLOAD = 10;
 
     private final JdbcTemplate jdbc;
-    private final TextIndexer indexer;
 
-    public KbController(JdbcTemplate jdbc, TextIndexer indexer, HybridSearchService hybrid) {
+    public KbController(JdbcTemplate jdbc, KbDocService docService, DocumentExtractor extractor,
+                        HybridSearchService hybrid) {
         this.jdbc = jdbc;
-        this.indexer = indexer;
+        this.docService = docService;
+        this.extractor = extractor;
         this.hybrid = hybrid;
     }
 
@@ -97,7 +108,9 @@ public class KbController {
         });
         return jdbc.query(
                 "SELECT id, name, description, status, chunk_size, chunk_overlap, doc_count, chunk_total, "
-                        + "owner, created_at, updated_at FROM kb_space ORDER BY updated_at DESC",
+                        // 个人库（space_type='PERSONAL'）不出现在平台管理页，防他人个人库标题泄露
+                        + "owner, created_at, updated_at FROM kb_space WHERE space_type = 'PLATFORM' "
+                        + "ORDER BY updated_at DESC",
                 (rs, i) -> new SpaceView(rs.getLong("id"), rs.getString("name"), rs.getString("description"),
                         rs.getString("status"), rs.getInt("chunk_size"), rs.getInt("chunk_overlap"),
                         rs.getInt("doc_count"), rs.getInt("chunk_total"), rs.getString("owner"),
@@ -109,7 +122,8 @@ public class KbController {
     public ResponseEntity<?> detail(@PathVariable long id) {
         List<SpaceView> spaces = jdbc.query(
                 "SELECT id, name, description, status, chunk_size, chunk_overlap, doc_count, chunk_total, "
-                        + "owner, created_at, updated_at FROM kb_space WHERE id = ?",
+                        // 与 list() 同理：个人库对平台管理页不可见（含直链探测详情，统一 404 语义）
+                        + "owner, created_at, updated_at FROM kb_space WHERE id = ? AND space_type = 'PLATFORM'",
                 (rs, i) -> new SpaceView(rs.getLong("id"), rs.getString("name"), rs.getString("description"),
                         rs.getString("status"), rs.getInt("chunk_size"), rs.getInt("chunk_overlap"),
                         rs.getInt("doc_count"), rs.getInt("chunk_total"), rs.getString("owner"),
@@ -191,13 +205,10 @@ public class KbController {
 
     @DeleteMapping("/spaces/{id}")
     public ResponseEntity<?> delete(@PathVariable long id) {
-        int deleted = jdbc.update("DELETE FROM kb_space WHERE id = ?", id);
-        if (deleted == 0) {
+        // 级联（文档/切片/绑定/向量索引）统一在 KbDocService，个人库删除复用同一实现
+        if (!docService.removeSpace(id)) {
             return badRequest("知识库不存在");
         }
-        jdbc.update("DELETE FROM kb_document WHERE space_id = ?", id);
-        jdbc.update("DELETE FROM kb_chunk WHERE space_id = ?", id);
-        jdbc.update("DELETE FROM kb_binding WHERE space_id = ?", id);
         return ResponseEntity.ok(Map.of("message", "知识库及全部文档已删除"));
     }
 
@@ -221,7 +232,6 @@ public class KbController {
         if (files.size() > MAX_DOCS_PER_UPLOAD) {
             return badRequest("单次最多上传 " + MAX_DOCS_PER_UPLOAD + " 个文件");
         }
-        SpaceConf conf = confOf(id);
         int ready = 0;
         int failed = 0;
         List<String> errors = new ArrayList<>();
@@ -236,24 +246,21 @@ public class KbController {
                 byte[] bytes = file.getBytes();
                 int sizeKb = Math.max(bytes.length / 1024, 1);
                 String title = original.length() > 200 ? original.substring(0, 200) : original;
-                if (TEXT_TYPES.contains(ext)) {
-                    String content = new String(bytes, StandardCharsets.UTF_8);
-                    insertDocument(id, title, ext, sizeKb, content, conf, principal.username());
+                try {
+                    // 统一走 DocumentExtractor：txt/md/csv 直读，pdf/doc/docx/html/htm 交 Tika
+                    String content = extractor.extract(bytes, ext);
+                    docService.insertDocument(id, title, ext, sizeKb, content, principal.username(), null);
                     ready++;
-                } else {
-                    jdbc.update("""
-                            INSERT INTO kb_document
-                                (space_id, title, doc_type, size_kb, status, error_msg, owner)
-                            VALUES (?, ?, ?, ?, 'FAILED', ?, ?)
-                            """, id, title, ext, sizeKb,
-                            "文本提取引擎未接入（当前支持 txt/md/csv），第二期支持 PDF/Word", principal.username());
+                } catch (IllegalArgumentException | IllegalStateException e) {
+                    // 提不出正文（扫描版 PDF、超 2MB 文本、损坏文件）如实标 FAILED，不造假
+                    docService.insertFailedDocument(id, title, ext, sizeKb, failMsg(e), principal.username());
                     failed++;
                 }
             } catch (IOException e) {
                 errors.add(original + "：读取失败");
             }
         }
-        recalcSpace(id);
+        docService.recalcSpace(id);
         String message = "成功解析 " + ready + " 篇"
                 + (failed > 0 ? "，" + failed + " 篇解析失败" : "")
                 + (errors.isEmpty() ? "" : "（" + String.join("；", errors) + "）");
@@ -274,19 +281,16 @@ public class KbController {
         } else {
             hybrid.removeDoc(docId);
         }
-        recalcSpace(id);
+        docService.recalcSpace(id);
         return ResponseEntity.ok(Map.of("message", req.enabled() ? "文档已启用，参与检索" : "文档已禁用，不参与检索"));
     }
 
     @DeleteMapping("/spaces/{id}/documents/{docId}")
     public ResponseEntity<?> deleteDoc(@PathVariable long id, @PathVariable long docId) {
-        int deleted = jdbc.update("DELETE FROM kb_document WHERE id = ? AND space_id = ?", docId, id);
-        if (deleted == 0) {
+        // 切片/向量/计数派生的级联都在 KbDocService.removeDoc 里，与个人库共用
+        if (!docService.removeDoc(id, docId)) {
             return badRequest("文档不存在");
         }
-        jdbc.update("DELETE FROM kb_chunk WHERE doc_id = ?", docId);
-        hybrid.removeDoc(docId);
-        recalcSpace(id);
         return ResponseEntity.ok(Map.of("message", "文档及切片已删除"));
     }
 
@@ -295,7 +299,7 @@ public class KbController {
     /** 从提取出的纯文本全量重切：解析失败的文档跳过（没有 content 可切） */
     @PostMapping("/spaces/{id}/rebuild")
     public ResponseEntity<?> rebuild(@PathVariable long id) {
-        SpaceConf conf = confOf(id);
+        KbDocService.SpaceConf conf = docService.confOf(id);
         List<long[]> docs = jdbc.query(
                 "SELECT id, words FROM kb_document WHERE space_id = ? AND status = 'READY'",
                 (rs, i) -> new long[]{rs.getLong("id"), rs.getInt("words")}, id);
@@ -303,11 +307,11 @@ public class KbController {
         jdbc.update("DELETE FROM kb_chunk WHERE space_id = ?", id);
         int total = 0;
         for (long[] doc : docs) {
-            total += rechunkDoc(id, doc[0], conf);
+            total += docService.rechunkDoc(id, doc[0], conf);
         }
         // 重切后统一重建向量索引：从 MySQL 读权威数据，向量库丢了也能一键恢复
         hybrid.reindexSpace(jdbc, id);
-        recalcSpace(id);
+        docService.recalcSpace(id);
         return ResponseEntity.ok(Map.of("message", "重建完成：" + docs.size() + " 篇文档，共 " + total + " 个切片"));
     }
 
@@ -341,77 +345,7 @@ public class KbController {
                 hits));
     }
 
-    // ---------- 内部：配置 / 解析 / 计数 ----------
-
-    private record SpaceConf(int chunkSize, int chunkOverlap) {
-    }
-
-    private SpaceConf confOf(long spaceId) {
-        return jdbc.queryForObject(
-                "SELECT chunk_size, chunk_overlap FROM kb_space WHERE id = ?",
-                (rs, i) -> new SpaceConf(rs.getInt("chunk_size"), rs.getInt("chunk_overlap")), spaceId);
-    }
-
-    private void insertDocument(long spaceId, String title, String ext, int sizeKb,
-                                String content, SpaceConf conf, String owner) {
-        List<TextIndexer.Chunk> chunks = indexer.chunk(content, conf.chunkSize(), conf.chunkOverlap());
-        int words = content.length();
-        jdbc.update("""
-                INSERT INTO kb_document
-                    (space_id, title, doc_type, size_kb, words, chunks, status, enabled, content, owner)
-                VALUES (?, ?, ?, ?, ?, ?, 'READY', 1, ?, ?)
-                """, spaceId, title, ext, sizeKb, words, chunks.size(), content, owner);
-        Long docId = jdbc.queryForObject(
-                "SELECT id FROM kb_document WHERE space_id = ? ORDER BY id DESC LIMIT 1", Long.class, spaceId);
-        insertChunks(spaceId, docId, chunks);
-    }
-
-    /** 重建索引用：文档行已存在，删旧切片后按当前配置重切 */
-    private int rechunkDoc(long spaceId, long docId, SpaceConf conf) {
-        List<String> contents = jdbc.query("SELECT content FROM kb_document WHERE id = ?",
-                (rs, i) -> rs.getString("content"), docId);
-        String content = contents.isEmpty() ? null : contents.getFirst();
-        if (content == null || content.isBlank()) {
-            return 0;
-        }
-        jdbc.update("DELETE FROM kb_chunk WHERE doc_id = ?", docId);
-        List<TextIndexer.Chunk> chunks = indexer.chunk(content, conf.chunkSize(), conf.chunkOverlap());
-        insertChunks(spaceId, docId, chunks);
-        jdbc.update("UPDATE kb_document SET chunks = ?, words = ? WHERE id = ?",
-                chunks.size(), content.length(), docId);
-        // 重切的切片同步向量索引（title 需要回查文档表）
-        String title = jdbc.queryForObject("SELECT title FROM kb_document WHERE id = ?", String.class, docId);
-        hybrid.indexDoc(spaceId, docId, title, chunks);
-        return chunks.size();
-    }
-
-    private void insertChunks(long spaceId, Long docId, List<TextIndexer.Chunk> chunks) {
-        if (chunks.isEmpty()) {
-            return;
-        }
-        jdbc.batchUpdate(
-                "INSERT INTO kb_chunk (space_id, doc_id, seq, content, words) VALUES (?, ?, ?, ?, ?)",
-                chunks.stream()
-                        .map(c -> new Object[]{spaceId, docId, c.seq(), c.content(), c.words()})
-                        .toList());
-    }
-
-    /** 空间计数与状态由文档实时派生：无文档=BUILDING，有失败无可用=FAILED，否则 READY */
-    private void recalcSpace(long spaceId) {
-        jdbc.update("""
-                UPDATE kb_space s SET
-                    s.doc_count = (SELECT COUNT(*) FROM kb_document d WHERE d.space_id = s.id),
-                    s.chunk_total = (SELECT COALESCE(SUM(d.chunks), 0) FROM kb_document d
-                                     WHERE d.space_id = s.id AND d.enabled = 1),
-                    s.status = CASE
-                        WHEN (SELECT COUNT(*) FROM kb_document d WHERE d.space_id = s.id) = 0 THEN 'BUILDING'
-                        WHEN (SELECT COUNT(*) FROM kb_document d WHERE d.space_id = s.id AND d.status = 'READY'
-                              AND d.enabled = 1) > 0 THEN 'READY'
-                        ELSE 'FAILED'
-                    END
-                WHERE s.id = ?
-                """, spaceId);
-    }
+    // ---------- 内部：通用小工具 ----------
 
     private void saveAgents(Long spaceId, List<String> agents) {
         if (spaceId == null || agents == null || agents.isEmpty()) {
@@ -424,6 +358,13 @@ public class KbController {
     private String extOf(String filename) {
         int dot = filename.lastIndexOf('.');
         return dot < 0 ? "" : filename.substring(dot + 1).toLowerCase();
+    }
+
+    /** error_msg 列是 VARCHAR(255)：异常信息截断到列宽内，避免严格模式下写库报错 */
+    private String failMsg(Exception e) {
+        String reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+        String msg = "解析失败：" + reason;
+        return msg.length() > 255 ? msg.substring(0, 255) : msg;
     }
 
     private int clamp(Integer value, int min, int max, int fallback) {

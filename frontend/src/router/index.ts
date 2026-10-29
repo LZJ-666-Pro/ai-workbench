@@ -36,13 +36,27 @@ const router = createRouter({
         { path: 'visit', name: 'admin-visit', component: () => import('../views/admin/AdminVisit.vue') },
       ],
     },
+    // 个人知识库管理后台（app-knowledge 8082）：个人库治理 / 绑定 / 检索审计，仅 ADMIN
+    {
+      path: '/kb-admin',
+      component: () => import('../views/kbadmin/KbAdminLayout.vue'),
+      redirect: '/kb-admin/dashboard',
+      children: [
+        { path: 'dashboard', name: 'kb-admin-dashboard', component: () => import('../views/kbadmin/KbAdminDashboard.vue') },
+        { path: 'libraries', name: 'kb-admin-libraries', component: () => import('../views/kbadmin/KbAdminLibraries.vue') },
+        // 文档下钻独立页（甲方要求替代右侧抽屉）：路径带 spaceId，库名经 query 透传仅用于标题展示
+        { path: 'libraries/:spaceId/docs', name: 'kb-admin-library-docs', component: () => import('../views/kbadmin/KbAdminLibraryDocs.vue') },
+        { path: 'bindings', name: 'kb-admin-bindings', component: () => import('../views/kbadmin/KbAdminBindings.vue') },
+        { path: 'audit', name: 'kb-admin-audit', component: () => import('../views/kbadmin/KbAdminAudit.vue') },
+      ],
+    },
   ],
 })
 
 /**
  * 全局路由守卫：
  *   - 未登录一律去 /login（登录页与公开页除外），并记住原目标
- *   - /admin/** 仅 ADMIN 角色可进
+ *   - /admin/** 与 /kb-admin/** 仅 ADMIN 角色可进
  * 首次导航时顺带用 token 换一次最新用户信息（token 失效会被清退到登录页）
  */
 let meChecked = false
@@ -67,9 +81,9 @@ router.beforeEach(async (to) => {
   return true
 })
 
-/** 仅管理员可进的页面：管理后台与平台运行日志 */
+/** 仅管理员可进的页面：银行后台、个人知识库后台与平台运行日志 */
 function isAdminOnly(path: string): boolean {
-  return path.startsWith('/admin') || path === '/logs'
+  return path.startsWith('/admin') || path.startsWith('/kb-admin') || path === '/logs'
 }
 
 export default router

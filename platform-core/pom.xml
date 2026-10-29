@@ -79,6 +79,23 @@
             <artifactId>langchain4j-pgvector</artifactId>
         </dependency>
 
+        <!--
+          文档解析：Tika 一套依赖覆盖 pdf/doc/docx/html/rtf 等（内部就是 PDFBox/POI），
+          调用面只有 Tika.parse，避免各引 PDFBox+POI+jsoup 再自己拼解析链。
+          tika-parsers-standard-package 是 2.x 起的全量解析器打包，只引 tika-core
+          只能探测类型、不能解析内容，两者必须同版本成对出现。
+        -->
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-core</artifactId>
+            <version>${tika.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-parsers-standard-package</artifactId>
+            <version>${tika.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

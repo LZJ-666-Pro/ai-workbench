@@ -108,6 +108,7 @@ const TOOL_LABELS: Record<string, string> = {
   queryTransferLimit: '正在查询转账限额',
   queryReceipt: '正在查询电子回单',
   searchKnowledge: '正在检索业务知识库',
+  searchMyKnowledge: '正在检索你的知识库',
 }
 
 function toolLabel(name: string): string {

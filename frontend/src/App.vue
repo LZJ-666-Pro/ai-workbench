@@ -17,7 +17,8 @@ const notifCount = computed(() => notifications.value.filter(n => n.to).length)
  * 全局搜索显示范围：登录页没有顶栏；管理后台有自己的侧栏与上下文，
  * 塞一个平台级搜索进去只会干扰，因此这两处不显示。
  */
-const showSearch = computed(() => route.path !== '/login' && !route.path.startsWith('/admin'))
+const showSearch = computed(() =>
+  route.path !== '/login' && !route.path.startsWith('/admin') && !route.path.startsWith('/kb-admin'))
 
 /** 当前环境。只有生产环境可用——把没开通的环境做成可点的选项，本身就是一种假数据 */
 const currentEnv = '生产环境'
@@ -29,10 +30,10 @@ function onEnvCommand(command: string) {
 }
 /** 聊天工作区/后台/登录页/日志页是全屏布局，不走 .main 的限宽布局 */
 const isChatRoute = computed(() =>
-  ['/bank', '/knowledge', '/interview', '/admin', '/login', '/logs'].some(p => route.path.startsWith(p)),
+  ['/bank', '/knowledge', '/interview', '/admin', '/kb-admin', '/login', '/logs'].some(p => route.path.startsWith(p)),
 )
 
-const isAdminRoute = computed(() => route.path.startsWith('/admin'))
+const isAdminRoute = computed(() => route.path.startsWith('/admin') || route.path.startsWith('/kb-admin'))
 
 /** 设置页/开发者页用宽容器（1280px）；工作台/应用中心/数据源/知识库页是通栏门户（portal），自己管宽度 */
 const isWideRoute = computed(() => ['/developers', '/settings'].includes(route.path))
@@ -60,7 +61,8 @@ const isTopPage = computed(() => navLinks.some(l => l.to === route.path))
 /** 顶栏用户下拉：管理后台（仅 ADMIN）与退出登录 */
 function onUserCommand(command: string) {
   if (command === 'admin') {
-    router.push('/admin')
+    // 不同 Agent 各有管理后台：银行后台 /admin、个人知识库后台 /kb-admin，按当前所在应用分流
+    router.push(route.path.startsWith('/knowledge') ? '/kb-admin' : '/admin')
     return
   }
   if (command === 'logout') {

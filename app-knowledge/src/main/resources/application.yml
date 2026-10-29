@@ -4,14 +4,25 @@ server:
 spring:
   application:
     name: app-knowledge
+  # 个人库文档上传：默认 1MB 放不下契约里的「单文件 ≤20MB」，与 app-bank 同参数
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 100MB
   datasource:
     url: jdbc:mysql://localhost:13306/ai_workbench?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: root
-    password: ${MYSQL_PASSWORD}
+    # 本地默认与 .env 保持一致，防止 dotenv 未加载时占位符解析失败；生产用环境变量覆盖
+    password: ${MYSQL_PASSWORD:204512}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  flyway:
+    # 三应用共库共用一条全局迁移时间线：本模块 classpath 只带 platform-core 的迁移
+    # （V1/V5~V8/V12），开发库历史里 app-bank 的 V2~V4/V9~V11 属「已应用但本地不存在」，
+    # 默认 validate 会拒绝启动；missing 模式忽略这类差异，各自应用只认领自己的迁移
+    ignore-migration-patterns: "*:missing"
 
-# 可观测性：本应用没有登录体系，只暴露不敏感的 health/info；
-# 指标端点（metrics/prometheus）留给已有鉴权的 app-bank。
+# 可观测性：health/info 不敏感直接放开；metrics/prometheus 不暴露
+#（本服务的 /api/** 全部要求登录，Actuator 不在其列，少开一个面就少一分暴露）
 management:
   endpoints:
     web:
@@ -33,8 +44,32 @@ ai:
     base-url: ${AI_LLM_BASE_URL:https://ws-k4ybdjfu1bcadgfh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
     api-key: ${AI_LLM_API_KEY:${GLM_API_KEY:}}
     model-name: ${AI_LLM_MODEL:qwen3.8-flash}
-  # Phase 2 打开下面两项，启用向量模型与 pgvector
+  # 知识库混合检索的向量半边：与 LLM 同一 OpenAI 兼容网关（DashScope 兼容模式）。
+  # 未启用时 HybridSearchService 自动退化为纯关键词召回，功能不受影响
   embedding:
-    enabled: false
+    enabled: true
+    base-url: ${AI_LLM_BASE_URL:https://ws-k4ybdjfu1bcadgfh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
+    api-key: ${AI_LLM_API_KEY:${GLM_API_KEY:}}
+    model-name: text-embedding-v3
   rag:
-    enabled: false
+    enabled: true
+    host: localhost
+    port: 15432
+    database: ai_workbench_vec
+    user: postgres
+    password: ai123456
+    table: kb_vectors
+    dimension: 1024
+
+auth:
+  jwt:
+    # HS256 验签密钥：与 app-bank 同源（token 由 app-bank 签发、本服务只验签），
+    # 两边必须一致，生产必须用环境变量覆盖（至少 32 字节）
+    secret: ${JWT_SECRET:ai-workbench-dev-jwt-secret-key-0123456789abcdef}
+
+# 个人知识库企业配额（与 /api/kb/admin 管理后台同源的治理手段）：
+# 超出上限后上传与网页抓取直接 400，防止单用户吃满共享存储
+kb:
+  personal:
+    max-docs: 200      # 每人文档数上限，0=不限制（企业配额默认值，防单用户吃满存储）
+    max-total-mb: 512  # 每人累计存储上限（MB），0=不限制

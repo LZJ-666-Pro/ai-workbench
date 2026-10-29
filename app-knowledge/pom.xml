@@ -19,6 +19,25 @@
             <groupId>com.ai.workbench</groupId>
             <artifactId>platform-core</artifactId>
         </dependency>
+        <!-- 登录认证：解析 app-bank 签发的 JWT（jjwt 0.12.x，与 app-bank 同密钥同算法）。
+             本应用只验签不签发（登录入口在 app-bank），仍需完整三件套才能 parseSignedClaims -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>0.12.6</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>0.12.6</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>0.12.6</version>
+            <scope>runtime</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -38,6 +57,20 @@
                         </goals>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.6</version>
+                <configuration>
+                    <!-- 与 app-bank 对齐：单测 *Test 与集成测试 *IT 统一在 mvn test 执行。
+                         集成测试需要真实 MySQL，连不上时由 Assumptions 自动跳过，
+                         保证「没有数据库的机器上 mvn test 依然绿」 -->
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*IT.java</include>
+                    </includes>
+                </configuration>
             </plugin>
         </plugins>
     </build>
