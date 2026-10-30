@@ -3,7 +3,7 @@ package com.ai.workbench.bank.risk;
 import java.math.BigDecimal;
 import java.util.Set;
 
-import com.ai.workbench.bank.identity.BankIdentity;
+import com.ai.workbench.core.identity.BankIdentity;
 
 /**
  * 转账硬规则：纯函数、无 IO，所需数据由调用方（TransferService）查询后传入。

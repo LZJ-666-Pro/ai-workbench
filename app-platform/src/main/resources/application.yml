@@ -1,0 +1,65 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: app-platform
+  # 平台知识库文档上传：与 app-bank/app-knowledge 同参数
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 100MB
+  datasource:
+    url: jdbc:mysql://localhost:13306/ai_workbench?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    # 本地默认与 .env 保持一致，防止 dotenv 未加载时占位符解析失败；生产用环境变量覆盖
+    password: ${MYSQL_PASSWORD:204512}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+# 可观测性：health/info 不敏感直接放开；metrics/prometheus 不暴露
+#（本服务的 /api/** 全部要求登录，Actuator 不在其列，少开一个面就少一分暴露）
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+
+ai:
+  llm:
+    base-url: ${AI_LLM_BASE_URL:https://ws-k4ybdjfu1bcadgfh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
+    api-key: ${AI_LLM_API_KEY:${GLM_API_KEY:}}
+    model-name: ${AI_LLM_MODEL:qwen3.8-flash}
+  # 平台监控页的向量库探测 + 知识库混合检索的向量半边：与 LLM 同一 OpenAI 兼容网关。
+  # 未启用时 HybridSearchService 自动退化为纯关键词召回，功能不受影响
+  embedding:
+    enabled: true
+    base-url: ${AI_LLM_BASE_URL:https://ws-k4ybdjfu1bcadgfh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
+    api-key: ${AI_LLM_API_KEY:${GLM_API_KEY:}}
+    model-name: text-embedding-v3
+  rag:
+    enabled: true
+    host: localhost
+    port: 15432
+    database: ai_workbench_vec
+    user: postgres
+    password: ai123456
+    table: kb_vectors
+    dimension: 1024
+
+auth:
+  jwt:
+    # HS256 签发/验签密钥：登录迁到本服务后 token 在此签发，其他应用（8081/8082）
+    # 只验签，两边必须同源；生产必须用环境变量覆盖（至少 32 字节）
+    secret: ${JWT_SECRET:ai-workbench-dev-jwt-secret-key-0123456789abcdef}
+    # token 有效期（小时）
+    expire-hours: 72

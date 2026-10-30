@@ -13,6 +13,7 @@
 
     <modules>
         <module>platform-core</module>
+        <module>app-platform</module>
         <module>app-bank</module>
         <module>app-knowledge</module>
         <module>app-interview</module>

@@ -1,4 +1,4 @@
-package com.ai.workbench.bank.support;
+package com.ai.workbench.core.support;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -11,6 +11,12 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
  * 集成测试数据库脚手架：直连真实 MySQL，不启动 Spring 容器、不依赖 Docker 客户端。
+ *
+ * 为什么放在主源码集而不是 test：app-bank 与 app-platform 的集成测试都要用它，
+ * 而 Maven 的 tests jar 只在 package 阶段产出——「mvn test 一条命令回归全模块」时
+ * reactor 里根本没有 test-jar 可解析，测试编译必然失败。放进主 jar 随普通依赖
+ * 传递，是共享测试基建在单命令回归下的唯一解；它不被任何生产代码引用，
+ * 打进生产 jar 的代价只是一个几十 KB 的工具类。
  *
  * 设计取舍：
  *  - 走真实 MySQL（而不是 H2）是因为被测代码大量依赖 MySQL 语义：REPEATABLE READ 快照、

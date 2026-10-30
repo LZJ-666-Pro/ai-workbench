@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import javax.sql.DataSource;
 
 import com.ai.workbench.bank.audit.ToolAuditLogger;
-import com.ai.workbench.bank.identity.BankIdentity;
-import com.ai.workbench.bank.support.BankTestDb;
+import com.ai.workbench.core.identity.BankIdentity;
+import com.ai.workbench.core.support.BankTestDb;
 import com.ai.workbench.core.kb.HybridSearchService;
 import com.ai.workbench.core.kb.TextIndexer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;

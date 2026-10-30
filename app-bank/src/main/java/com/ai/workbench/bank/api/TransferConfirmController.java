@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import com.ai.workbench.bank.auth.AuthInterceptor;
-import com.ai.workbench.bank.auth.JwtService.AuthPrincipal;
+import com.ai.workbench.core.auth.JwtService.AuthPrincipal;
 import com.ai.workbench.bank.service.TransferService;
 import com.ai.workbench.bank.service.TransferService.TransferResult;
 import io.micrometer.core.instrument.MeterRegistry;

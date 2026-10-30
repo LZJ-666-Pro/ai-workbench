@@ -17,7 +17,7 @@ import com.ai.workbench.bank.audit.ToolAuditLogger;
 import com.ai.workbench.bank.risk.TransferRiskProperties;
 import com.ai.workbench.bank.service.TransferService.PendingOrder;
 import com.ai.workbench.bank.service.TransferService.TransferResult;
-import com.ai.workbench.bank.support.BankTestDb;
+import com.ai.workbench.core.support.BankTestDb;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterAll;

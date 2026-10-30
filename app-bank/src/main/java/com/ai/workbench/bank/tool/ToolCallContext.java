@@ -1,6 +1,6 @@
 package com.ai.workbench.bank.tool;
 
-import com.ai.workbench.bank.identity.BankIdentity;
+import com.ai.workbench.core.identity.BankIdentity;
 
 /**
  * 工具调用上下文：BankToolProvider 在每次工具执行前放入 memoryId 与服务对象身份，

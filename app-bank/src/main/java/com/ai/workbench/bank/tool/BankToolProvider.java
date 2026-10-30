@@ -3,7 +3,7 @@ package com.ai.workbench.bank.tool;
 import java.lang.reflect.Method;
 import java.util.List;
 
-import com.ai.workbench.bank.identity.BankIdentity;
+import com.ai.workbench.core.identity.BankIdentity;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.agent.tool.ToolSpecifications;

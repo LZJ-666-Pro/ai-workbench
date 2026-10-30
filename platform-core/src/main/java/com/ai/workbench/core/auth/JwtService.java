@@ -1,4 +1,4 @@
-package com.ai.workbench.bank.auth;
+package com.ai.workbench.core.auth;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;

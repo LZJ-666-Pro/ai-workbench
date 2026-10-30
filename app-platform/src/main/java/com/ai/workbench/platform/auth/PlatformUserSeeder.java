@@ -1,4 +1,4 @@
-package com.ai.workbench.bank.auth;
+package com.ai.workbench.platform.auth;
 
 import java.util.List;
 

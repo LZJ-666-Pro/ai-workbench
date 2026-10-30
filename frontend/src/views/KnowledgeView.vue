@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Link, Upload } from '@element-plus/icons-vue'
 import ChatWindow from '../components/ChatWindow.vue'
+import { isOfflineError } from '../api/offline'
 import { auth } from '../api/auth'
 import {
   MAX_FILE_SIZE_MB, MAX_FILES_PER_UPLOAD,
@@ -18,17 +19,23 @@ const activeTab = ref<'chat' | 'docs'>('chat')
 const space = ref<PersonalSpace | null>(null)
 const documents = ref<PersonalDoc[]>([])
 const loadError = ref('')
+/** 离线（后端未启动/断网）时降级为 info 提示，避免"没起服务就像出了 bug"的误读 */
+const offline = ref(false)
 const loading = ref(false)
 
 async function load() {
   loading.value = true
   loadError.value = ''
+  offline.value = false
   try {
     const [s, docs] = await Promise.all([loadPersonalSpace(), loadPersonalDocs()])
     space.value = s
     documents.value = docs
   } catch (e) {
-    loadError.value = e instanceof Error ? e.message : '未知错误'
+    const message = e instanceof Error ? e.message : '未知错误'
+    loadError.value = message
+    // 个人库接口在 8082（KnowledgeApplication），服务未启动时代理回 500——降级为离线提示
+    offline.value = isOfflineError(message)
   } finally {
     loading.value = false
   }
@@ -142,7 +149,13 @@ const docStatusOf = (s: PersonalDoc['status']) => DOC_STATUS_META[s] ?? DOC_STAT
       <el-tab-pane label="我的文档" name="docs">
         <div class="docs-pane">
           <div class="docs-inner">
-            <el-alert v-if="loadError" class="load-error" type="warning" :title="loadError" :closable="false" show-icon>
+            <el-alert v-if="loadError && offline" class="load-error" type="info"
+              title="个人知识库暂不可用：服务所在后端可能未启动（需启动 KnowledgeApplication / 8082）" :closable="false" show-icon>
+              <template #default>
+                <el-button link type="primary" @click="load">重试</el-button>
+              </template>
+            </el-alert>
+            <el-alert v-else-if="loadError" class="load-error" type="warning" :title="loadError" :closable="false" show-icon>
               <template #default>
                 <el-button link type="primary" @click="load">重试</el-button>
               </template>

@@ -28,9 +28,9 @@ function onEnvCommand(command: string) {
     ElMessage.info('当前已在生产环境')
   }
 }
-/** 聊天工作区/后台/登录页/日志页是全屏布局，不走 .main 的限宽布局 */
+/** 聊天工作区/后台/登录页/日志页/平台监控页是全屏布局，不走 .main 的限宽布局 */
 const isChatRoute = computed(() =>
-  ['/bank', '/knowledge', '/interview', '/admin', '/kb-admin', '/login', '/logs'].some(p => route.path.startsWith(p)),
+  ['/bank', '/knowledge', '/interview', '/admin', '/kb-admin', '/login', '/logs', '/monitor'].some(p => route.path.startsWith(p)),
 )
 
 const isAdminRoute = computed(() => route.path.startsWith('/admin') || route.path.startsWith('/kb-admin'))

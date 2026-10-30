@@ -1,4 +1,4 @@
-package com.ai.workbench.bank.identity;
+package com.ai.workbench.core.identity;
 
 import java.util.List;
 

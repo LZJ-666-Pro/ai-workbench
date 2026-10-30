@@ -27,7 +27,7 @@ import com.ai.workbench.bank.admin.AdminDtos.OrderView;
 import com.ai.workbench.bank.admin.AdminDtos.OverviewStats;
 import com.ai.workbench.bank.admin.AdminDtos.PageResult;
 import com.ai.workbench.bank.admin.AdminDtos.TxnView;
-import com.ai.workbench.bank.identity.BankIdentity;
+import com.ai.workbench.core.identity.BankIdentity;
 import com.ai.workbench.bank.risk.TransferRiskRules;
 
 /**

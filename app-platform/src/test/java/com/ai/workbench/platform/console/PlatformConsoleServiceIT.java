@@ -1,13 +1,13 @@
-package com.ai.workbench.bank.console;
+package com.ai.workbench.platform.console;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 
-import com.ai.workbench.bank.console.ConsoleDtos.LogPage;
-import com.ai.workbench.bank.console.ConsoleDtos.Workbench;
-import com.ai.workbench.bank.support.BankTestDb;
+import com.ai.workbench.platform.console.ConsoleDtos.LogPage;
+import com.ai.workbench.platform.console.ConsoleDtos.Workbench;
+import com.ai.workbench.core.support.BankTestDb;
 import com.ai.workbench.core.agent.AgentRegistry;
 import com.ai.workbench.core.agent.AgentSpec;
 import com.ai.workbench.core.config.LlmProperties;

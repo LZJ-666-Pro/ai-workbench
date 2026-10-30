@@ -1,13 +1,14 @@
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
-// 三个后端应用各自独立端口，开发期用 API 路径前缀区分代理：
+// 四个后端应用各自独立端口，开发期用 API 路径前缀区分代理：
+//   /platform/api/*  → http://localhost:8080  (app-platform 平台数据服务)
 //   /bank/api/*      → http://localhost:8081  (app-bank)
 //   /knowledge/api/* → http://localhost:8082  (app-knowledge)
 //   /interview/api/* → http://localhost:8083  (app-interview)
 // 注意代理键必须收窄到 /xxx/api，否则会把 SPA 的页面路由 /bank 一并劫持去转发。
 // 代理转发时剥掉前缀，同时天然免 CORS。
-// Phase 4 部署时把这三条规则换成网关（Spring Cloud Gateway / Nginx）即可。
+// Phase 4 部署时把这四条规则换成网关（Spring Cloud Gateway / Nginx）即可。
 // target 用 127.0.0.1 而非 localhost：Windows 上 localhost 可能解析为
 // IPv6 ::1，而 Spring Boot 默认只监听 IPv4，导致代理偶发 500。
 export default defineConfig({
@@ -15,6 +16,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      '/platform/api': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true,
+        rewrite: p => p.replace(/^\/platform/, ''),
+      },
       '/bank/api': {
         target: 'http://127.0.0.1:8081',
         changeOrigin: true,

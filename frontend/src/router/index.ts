@@ -18,6 +18,8 @@ const router = createRouter({
     { path: '/developers', name: 'developers', component: () => import('../views/DevelopersView.vue') },
     // 平台运行日志：含会话 id、traceId 与业务明细，属运维视图，仅 ADMIN（与后端 /api/admin 前缀一致）
     { path: '/logs', name: 'logs', component: () => import('../views/LogsView.vue') },
+    // 平台监控：独立管理页（ADMIN 数据接口），与银行后台 /admin 互不相干
+    { path: '/monitor', name: 'monitor', component: () => import('../views/PlatformMonitorView.vue') },
     {
       path: '/admin',
       component: () => import('../views/admin/AdminLayout.vue'),

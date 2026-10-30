@@ -2,7 +2,7 @@ package com.ai.workbench.bank.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.ai.workbench.bank.identity.BankIdentity;
+import com.ai.workbench.core.identity.BankIdentity;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

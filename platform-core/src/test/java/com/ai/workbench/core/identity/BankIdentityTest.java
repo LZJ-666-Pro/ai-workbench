@@ -1,4 +1,4 @@
-package com.ai.workbench.bank.identity;
+package com.ai.workbench.core.identity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

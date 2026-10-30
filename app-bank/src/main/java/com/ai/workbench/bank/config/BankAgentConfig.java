@@ -1,6 +1,6 @@
 package com.ai.workbench.bank.config;
 
-import com.ai.workbench.bank.identity.BankIdentity;
+import com.ai.workbench.core.identity.BankIdentity;
 import com.ai.workbench.bank.risk.TransferRiskProperties;
 import com.ai.workbench.bank.tool.BankToolProvider;
 import com.ai.workbench.core.agent.AgentSpec;

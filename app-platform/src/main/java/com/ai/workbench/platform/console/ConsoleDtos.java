@@ -1,4 +1,4 @@
-package com.ai.workbench.bank.console;
+package com.ai.workbench.platform.console;
 
 import java.util.List;
 

@@ -6,6 +6,7 @@ import {
   Document, ArrowRight, Tickets,
 } from '@element-plus/icons-vue'
 import { loadWorkbench, probeAppRunning, type AppCard, type Workbench } from '../api/platform'
+import { isOfflineError } from '../api/offline'
 import ContextBar from '../components/ContextBar.vue'
 import PlatformBar from '../components/PlatformBar.vue'
 
@@ -16,17 +17,10 @@ const workbench = ref<Workbench | null>(null)
 const error = ref('')
 
 /**
- * 统计服务是否离线（区别于"统计报错"）：
- * 工作台统计接口跑在 app-bank（8081）里，该服务未启动时 Vite 代理连不上目标直接回 500，
- * fetch 阶段断网则抛 "Failed to fetch"。这两种情况是「后端不在」，不是「程序出错」——
- * 卡片状态探测会把它标成"未启动"，这里若再弹 HTTP 500 的告警就成了噪音。
- * 离线时降级为 info 提示条；真正的意外错误（如服务在跑但接口 500）才用 warning。
+ * 统计服务是否离线（区别于"统计报错"）：离线降级为 info 提示条，
+ * 真正的意外错误才用 warning。判断逻辑抽到 api/offline.ts 供各页共用。
  */
 const statsOffline = ref(false)
-
-function isOfflineError(message: string): boolean {
-  return /HTTP 5\d\d|Failed to fetch|fetch failed|NetworkError|load failed/i.test(message)
-}
 
 /** 视图偏好存本地：用户选了列表，刷新后不该变回卡片 */
 const VIEW_KEY = 'aiwb-app-view'

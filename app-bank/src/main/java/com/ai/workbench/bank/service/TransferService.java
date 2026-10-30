@@ -9,7 +9,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import com.ai.workbench.bank.audit.ToolAuditLogger;
-import com.ai.workbench.bank.identity.BankIdentity;
+import com.ai.workbench.core.identity.BankIdentity;
 import com.ai.workbench.bank.risk.RiskDecision;
 import com.ai.workbench.bank.risk.TransferRiskProperties;
 import com.ai.workbench.bank.risk.TransferRiskRules;

@@ -1,5 +1,5 @@
 /**
- * 平台工作台 API 封装（经 Vite 代理 /bank/api → 8081）。
+ * 平台工作台 API 封装（经 Vite 代理 /platform/api → 8080 平台数据服务）。
  *
  * 两个接口权限不同：
  *   - workbench 任何登录用户可读（首页门户，只有聚合数字）
@@ -25,7 +25,7 @@ export const notifications = ref<PlatformNotification[]>([])
  * /api/api/platform/workbench，后端 404——首页直接白屏。
  * 对照 admin.ts 的约定：PREFIX 里已经包含到 /admin 为止的全部前缀。
  */
-const PREFIX = '/bank/api'
+const PREFIX = '/platform/api'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const resp = await fetch(`${PREFIX}${path}`, {
@@ -123,6 +123,22 @@ export async function probeAppRunning(basePath: string, agent: string): Promise<
   }
 }
 
+/**
+ * 探测平台数据服务（8080）是否在线。
+ *
+ * 与 probeAppRunning 的语义不同：app-platform 不装配任何 Agent，没有
+ * /api/chat/agents 端点，它的存活信号是免认证的 /api/platform/ping。
+ * 同样刻意不走 request()：探测失败只代表服务没起，不该触发登录过期处理。
+ */
+export async function probePlatformRunning(): Promise<boolean> {
+  try {
+    const resp = await fetch('/platform/api/platform/ping')
+    return resp.ok
+  } catch {
+    return false
+  }
+}
+
 // ---------- 平台运行日志 ----------
 
 export interface LogRow {
@@ -171,6 +187,44 @@ export function loadPlatformLogs(query: LogQuery): Promise<LogPage> {
     if (v !== undefined && v !== '' && v !== null) qs.set(k, String(v))
   }
   return request<LogPage>(`/admin/platform-logs?${qs.toString()}`)
+}
+
+// ---------- 平台监控（ADMIN，/monitor 页） ----------
+
+/** 单项健康检查：status 取 UP / DOWN / DISABLED / UNCONFIGURED */
+export interface MonitorCheck {
+  key: string
+  name: string
+  status: 'UP' | 'DOWN' | 'DISABLED' | 'UNCONFIGURED'
+  latencyMs: number | null
+  detail: string
+}
+
+export interface MonitorRuntime {
+  uptimeMs: number
+  heapUsedMb: number
+  heapMaxMb: number
+  threads: number
+  processors: number
+  javaVersion: string
+}
+
+export interface MonitorTodayStats {
+  events: number
+  fails: number
+  denies: number
+}
+
+export interface MonitorPayload {
+  checks: MonitorCheck[]
+  runtime: MonitorRuntime
+  todayStats: MonitorTodayStats
+  trend24h: { hour: string; count: number }[]
+}
+
+/** 拉取平台监控数据（后端做真实探测：SELECT 1 / 端口连通 / 配置在位） */
+export function loadPlatformMonitor(): Promise<MonitorPayload> {
+  return request<MonitorPayload>('/admin/platform-monitor')
 }
 
 /** 应用标识 → 展示名与配色（日志表里只存 key） */

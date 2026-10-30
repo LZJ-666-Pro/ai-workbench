@@ -38,7 +38,7 @@ const healthy = computed(() => props.platform.successRate >= 99)
         <span class="pb-updated">数据更新于 {{ platform.updatedAt }}</span>
         <el-button size="small" class="outline-btn" @click="router.push('/developers')">开发者文档</el-button>
         <el-button v-if="auth.user?.platformRole === 'ADMIN'" size="small" class="outline-btn" @click="router.push('/logs')">查看日志</el-button>
-        <el-button v-if="auth.user?.platformRole === 'ADMIN'" size="small" class="outline-btn" @click="router.push('/admin/dashboard')">平台监控</el-button>
+        <el-button v-if="auth.user?.platformRole === 'ADMIN'" size="small" class="outline-btn" @click="router.push('/monitor')">平台监控</el-button>
       </div>
     </div>
   </div>

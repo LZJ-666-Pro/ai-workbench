@@ -9,11 +9,8 @@ spring:
     username: root
     password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
-  flyway:
-    # 开发库由 app-bank 共享（其 V2~V11 迁移已应用到库里，但本模块 classpath 没有这些脚本）。
-    # 不忽略缺失迁移的话，Flyway 校验会把「库里有、代码里没有」判为失败，本服务永远起不来。
-    # 注意：本模块不建表不迁移，ignore 只放宽校验，不影响任何已有结构
-    ignore-migration-patterns: "*:missing"
+  # 全部迁移已收拢在 platform-core（共库单时间线）：本模块随依赖拿到完整脚本，
+  # Flyway 校验自然通过；本模块自身不定义任何迁移
 
 # 可观测性：同 app-knowledge，无登录体系故只暴露 health/info
 management:

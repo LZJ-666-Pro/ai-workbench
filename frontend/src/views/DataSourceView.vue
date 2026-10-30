@@ -9,12 +9,15 @@ import {
   type DataSource, type SourceType, type SourceStatus,
 } from '../api/datasource'
 import { loadWorkbench, probeAppRunning, type Workbench } from '../api/platform'
+import { isOfflineError } from '../api/offline'
 import ContextBar from '../components/ContextBar.vue'
 import PlatformBar from '../components/PlatformBar.vue'
 
 const sources = ref<DataSource[]>([])
 const workbench = ref<Workbench | null>(null)
 const error = ref('')
+/** 离线（后端未启动/断网）时降级为 info 提示，避免"没起服务就像出了 bug"的误读 */
+const offline = ref(false)
 
 /** 绑定 Agent 的候选：与平台应用目录一致（APP_LABELS 同款） */
 const AGENT_OPTIONS = [
@@ -53,13 +56,17 @@ async function probeStatuses() {
 
 async function load() {
   error.value = ''
+  offline.value = false
   try {
     const [list, wb] = await Promise.all([loadDataSources(), loadWorkbench()])
     sources.value = list
     workbench.value = wb
     void probeStatuses()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '未知错误'
+    const message = e instanceof Error ? e.message : '未知错误'
+    error.value = message
+    // 接口在 8081（platform-core 随 BankApplication 跑），服务未启动时代理回 500——降级为离线提示
+    offline.value = isOfflineError(message)
   }
 }
 
@@ -302,7 +309,19 @@ onMounted(load)
       </div>
 
       <el-alert
-        v-if="error"
+        v-if="error && offline"
+        class="load-error"
+        type="info"
+        title="数据源列表暂不可用：服务所在后端可能未启动（数据源接口部署在 BankApplication / 8081）"
+        :closable="false"
+        show-icon
+      >
+        <template #default>
+          <el-button link type="primary" @click="load">重试</el-button>
+        </template>
+      </el-alert>
+      <el-alert
+        v-else-if="error"
         class="load-error"
         type="warning"
         :title="`数据源列表加载失败：${error}`"

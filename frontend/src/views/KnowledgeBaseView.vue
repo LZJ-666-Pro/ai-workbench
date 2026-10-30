@@ -9,6 +9,7 @@ import {
   type KbSpace,
 } from '../api/kb'
 import { loadWorkbench, type Workbench } from '../api/platform'
+import { isOfflineError } from '../api/offline'
 import ContextBar from '../components/ContextBar.vue'
 import PlatformBar from '../components/PlatformBar.vue'
 
@@ -17,6 +18,8 @@ const router = useRouter()
 const spaces = ref<KbSpace[]>([])
 const workbench = ref<Workbench | null>(null)
 const error = ref('')
+/** 离线（后端未启动/断网）时降级为 info 提示，避免"没起服务就像出了 bug"的误读 */
+const offline = ref(false)
 const loading = ref(false)
 
 const EMPTY_PLATFORM = {
@@ -52,12 +55,16 @@ const filtered = computed(() => spaces.value.filter(s => {
 async function load() {
   loading.value = true
   error.value = ''
+  offline.value = false
   try {
     const [list, wb] = await Promise.all([loadKbSpaces(), loadWorkbench()])
     spaces.value = list
     workbench.value = wb
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '未知错误'
+    const message = e instanceof Error ? e.message : '未知错误'
+    error.value = message
+    // 接口在 8081（platform-core 随 BankApplication 跑），服务未启动时代理回 500——降级为离线提示
+    offline.value = isOfflineError(message)
   } finally {
     loading.value = false
   }
@@ -196,7 +203,19 @@ onMounted(load)
       </div>
 
       <el-alert
-        v-if="error"
+        v-if="error && offline"
+        class="load-error"
+        type="info"
+        title="知识库列表暂不可用：服务所在后端可能未启动（平台知识库接口部署在 BankApplication / 8081）"
+        :closable="false"
+        show-icon
+      >
+        <template #default>
+          <el-button link type="primary" @click="load">重试</el-button>
+        </template>
+      </el-alert>
+      <el-alert
+        v-else-if="error"
         class="load-error"
         type="warning"
         :title="`知识库列表加载失败：${error}`"

@@ -2,7 +2,7 @@ package com.ai.workbench.bank.seed;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.ai.workbench.bank.support.BankTestDb;
+import com.ai.workbench.core.support.BankTestDb;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

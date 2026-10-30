@@ -28,8 +28,8 @@ describe('平台工作台接口', () => {
     // 教训：这里原先断言的是 /bank/api/api/platform/workbench——拼错了前缀，
     // 但测试是照实现写的，于是把 404 当成了正确契约锁死，首页因此白屏。
     // 契约来源：PlatformConsoleController 的 @GetMapping("/api/platform/workbench")
-    //           + Vite 代理 rewrite 去掉 /bank → 前端应请求 /bank/api/platform/workbench
-    expect(url).toBe('/bank/api/platform/workbench')
+    //           + Vite 代理 rewrite 去掉 /platform → 前端应请求 /platform/api/platform/workbench
+    expect(url).toBe('/platform/api/platform/workbench')
     expect(url).not.toContain('/api/api/')
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tk-1')
   })
@@ -43,7 +43,7 @@ describe('平台工作台接口', () => {
     await loadPlatformLogs({ app: 'bank', result: '', keyword: undefined, page: 2, size: 20 })
 
     const [url] = fetchMock.mock.calls[0] as unknown as [string]
-    expect(url).toBe('/bank/api/admin/platform-logs?app=bank&page=2&size=20')
+    expect(url).toBe('/platform/api/admin/platform-logs?app=bank&page=2&size=20')
     expect(url).not.toContain('/api/api/')
     expect(url).not.toContain('result=')
     expect(url).not.toContain('keyword=')
@@ -79,7 +79,7 @@ describe('全局搜索', () => {
     await searchPlatform('转账')
 
     const [url] = fetchMock.mock.calls[0] as unknown as [string]
-    expect(url).toBe('/bank/api/platform/search?q=%E8%BD%AC%E8%B4%A6&limit=5')
+    expect(url).toBe('/platform/api/platform/search?q=%E8%BD%AC%E8%B4%A6&limit=5')
     expect(url).not.toContain('/api/api/')
   })
 

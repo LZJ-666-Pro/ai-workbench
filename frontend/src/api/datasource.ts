@@ -6,7 +6,7 @@
  */
 import { authHeaders, handleUnauthorized } from './auth'
 
-const PREFIX = '/bank/api/datasources'
+const PREFIX = '/platform/api/datasources'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const resp = await fetch(`${PREFIX}${path}`, {

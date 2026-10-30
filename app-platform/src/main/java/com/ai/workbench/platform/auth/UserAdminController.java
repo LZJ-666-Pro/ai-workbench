@@ -1,10 +1,12 @@
-package com.ai.workbench.bank.auth;
+package com.ai.workbench.platform.auth;
+import com.ai.workbench.core.auth.CorePrincipal;
+import com.ai.workbench.core.auth.JwtService;
 
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-import com.ai.workbench.bank.identity.BankIdentity;
+import com.ai.workbench.core.identity.BankIdentity;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -100,7 +102,7 @@ public class UserAdminController {
     @PatchMapping("/{id}/status")
     public ResponseEntity<Map<String, String>> updateStatus(
             @PathVariable long id, @RequestBody StatusRequest req,
-            @RequestAttribute(AuthInterceptor.ATTR_PRINCIPAL) JwtService.AuthPrincipal principal) {
+            @RequestAttribute(CorePrincipal.ATTR_PRINCIPAL) JwtService.AuthPrincipal principal) {
         var usernames = jdbc.query(
                 "SELECT username FROM platform_user WHERE id = ?",
                 (rs, i) -> rs.getString("username"), id);

@@ -15,11 +15,6 @@ spring:
     # 本地默认与 .env 保持一致，防止 dotenv 未加载时占位符解析失败；生产用环境变量覆盖
     password: ${MYSQL_PASSWORD:204512}
     driver-class-name: com.mysql.cj.jdbc.Driver
-  flyway:
-    # 三应用共库共用一条全局迁移时间线：本模块 classpath 只带 platform-core 的迁移
-    # （V1/V5~V8/V12），开发库历史里 app-bank 的 V2~V4/V9~V11 属「已应用但本地不存在」，
-    # 默认 validate 会拒绝启动；missing 模式忽略这类差异，各自应用只认领自己的迁移
-    ignore-migration-patterns: "*:missing"
 
 # 可观测性：health/info 不敏感直接放开；metrics/prometheus 不暴露
 #（本服务的 /api/** 全部要求登录，Actuator 不在其列，少开一个面就少一分暴露）

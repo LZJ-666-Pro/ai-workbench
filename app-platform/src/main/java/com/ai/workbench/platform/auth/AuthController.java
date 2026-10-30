@@ -1,4 +1,6 @@
-package com.ai.workbench.bank.auth;
+package com.ai.workbench.platform.auth;
+import com.ai.workbench.core.auth.CorePrincipal;
+import com.ai.workbench.core.auth.JwtService;
 
 import java.util.Map;
 
@@ -87,7 +89,7 @@ public class AuthController {
     }
 
     @GetMapping("/me")
-    public UserView me(@RequestAttribute(AuthInterceptor.ATTR_PRINCIPAL) JwtService.AuthPrincipal p) {
+    public UserView me(@RequestAttribute(CorePrincipal.ATTR_PRINCIPAL) JwtService.AuthPrincipal p) {
         return new UserView(p.username(), p.displayName(), p.role(), p.identityId());
     }
 

@@ -9,6 +9,7 @@ import {
   KB_STATUS_META, DOC_STATUS_META,
   type KbSpaceDetail, type KbSearchResult, type KbDoc,
 } from '../api/kb'
+import { isOfflineError } from '../api/offline'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,6 +17,8 @@ const router = useRouter()
 const spaceId = computed(() => String(route.params.id))
 const detail = ref<KbSpaceDetail | null>(null)
 const error = ref('')
+/** 离线（后端未启动/断网）时降级为 info 提示，避免"没起服务就像出了 bug"的误读 */
+const offline = ref(false)
 const loading = ref(false)
 
 const AGENT_LABELS: Record<string, string> = {
@@ -40,10 +43,14 @@ const headMetrics = computed(() => [
 async function load() {
   loading.value = true
   error.value = ''
+  offline.value = false
   try {
     detail.value = await loadKbSpace(spaceId.value)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '未知错误'
+    const message = e instanceof Error ? e.message : '未知错误'
+    error.value = message
+    // 接口在 8081（platform-core 随 BankApplication 跑），服务未启动时代理回 500——降级为离线提示
+    offline.value = isOfflineError(message)
   } finally {
     loading.value = false
   }
@@ -223,7 +230,13 @@ onMounted(load)
         </el-button>
       </div>
 
-      <el-alert v-if="error" class="load-error" type="warning" :title="error" :closable="false" show-icon>
+      <el-alert v-if="error && offline" class="load-error" type="info"
+        title="知识库详情暂不可用：服务所在后端可能未启动（平台知识库接口部署在 BankApplication / 8081）" :closable="false" show-icon>
+        <template #default>
+          <el-button link type="primary" @click="load">重试</el-button>
+        </template>
+      </el-alert>
+      <el-alert v-else-if="error" class="load-error" type="warning" :title="error" :closable="false" show-icon>
         <template #default>
           <el-button link type="primary" @click="load">重试</el-button>
         </template>

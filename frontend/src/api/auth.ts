@@ -48,7 +48,7 @@ export function handleUnauthorized() {
 }
 
 export async function login(username: string, password: string): Promise<AuthUser> {
-  const resp = await fetch('/bank/api/auth/login', {
+  const resp = await fetch('/platform/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
@@ -77,7 +77,7 @@ export function logout() {
 export async function refreshMe(): Promise<void> {
   if (!auth.token) return
   try {
-    const resp = await fetch('/bank/api/auth/me', { headers: authHeaders() })
+    const resp = await fetch('/platform/api/auth/me', { headers: authHeaders() })
     if (resp.status === 401) {
       handleUnauthorized()
       return

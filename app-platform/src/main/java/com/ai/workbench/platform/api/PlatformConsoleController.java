@@ -1,11 +1,11 @@
-package com.ai.workbench.bank.api;
+package com.ai.workbench.platform.api;
+import com.ai.workbench.core.auth.CorePrincipal;
 
-import com.ai.workbench.bank.auth.AuthInterceptor;
-import com.ai.workbench.bank.auth.JwtService.AuthPrincipal;
-import com.ai.workbench.bank.console.ConsoleDtos.LogPage;
-import com.ai.workbench.bank.console.ConsoleDtos.SearchResult;
-import com.ai.workbench.bank.console.ConsoleDtos.Workbench;
-import com.ai.workbench.bank.console.PlatformConsoleService;
+import com.ai.workbench.core.auth.JwtService.AuthPrincipal;
+import com.ai.workbench.platform.console.ConsoleDtos.LogPage;
+import com.ai.workbench.platform.console.ConsoleDtos.SearchResult;
+import com.ai.workbench.platform.console.ConsoleDtos.Workbench;
+import com.ai.workbench.platform.console.PlatformConsoleService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -34,7 +34,7 @@ public class PlatformConsoleController {
     }
 
     @GetMapping("/api/platform/workbench")
-    public Workbench workbench(@RequestAttribute(AuthInterceptor.ATTR_PRINCIPAL) AuthPrincipal principal) {
+    public Workbench workbench(@RequestAttribute(CorePrincipal.ATTR_PRINCIPAL) AuthPrincipal principal) {
         return console.workbench("ADMIN".equals(principal.role()));
     }
 
@@ -58,7 +58,7 @@ public class PlatformConsoleController {
      * 非管理员仍能搜到应用与接口，不会因为权限不同整个功能就不可用。
      */
     @GetMapping("/api/platform/search")
-    public SearchResult search(@RequestAttribute(AuthInterceptor.ATTR_PRINCIPAL) AuthPrincipal principal,
+    public SearchResult search(@RequestAttribute(CorePrincipal.ATTR_PRINCIPAL) AuthPrincipal principal,
                                @RequestParam String q,
                                @RequestParam(defaultValue = "5") int limit) {
         int safeLimit = Math.min(Math.max(1, limit), 20);

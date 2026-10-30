@@ -1,4 +1,4 @@
-package com.ai.workbench.core.kb;
+package com.ai.workbench.platform.kb;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 
 import com.ai.workbench.core.auth.CorePrincipal;
+import com.ai.workbench.core.kb.*;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.DeleteMapping;

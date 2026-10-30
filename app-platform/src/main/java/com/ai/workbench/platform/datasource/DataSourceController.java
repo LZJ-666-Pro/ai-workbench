@@ -1,4 +1,4 @@
-package com.ai.workbench.core.datasource;
+package com.ai.workbench.platform.datasource;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.ai.workbench.core.auth.CorePrincipal;
+import com.ai.workbench.core.datasource.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.ResponseEntity;

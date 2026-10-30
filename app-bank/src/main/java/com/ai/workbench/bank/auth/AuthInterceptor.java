@@ -5,9 +5,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.ai.workbench.bank.auth.JwtService.AuthPrincipal;
-import com.ai.workbench.bank.identity.BankIdentity;
 import com.ai.workbench.core.auth.CorePrincipal;
+import com.ai.workbench.core.auth.JwtService;
+import com.ai.workbench.core.auth.JwtService.AuthPrincipal;
+import com.ai.workbench.core.identity.BankIdentity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;

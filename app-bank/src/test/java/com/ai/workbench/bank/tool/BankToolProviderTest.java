@@ -10,7 +10,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.ai.workbench.bank.audit.ToolAuditLogger;
-import com.ai.workbench.bank.identity.BankIdentity;
+import com.ai.workbench.core.identity.BankIdentity;
 import com.ai.workbench.bank.service.Account;
 import com.ai.workbench.bank.service.DbBankService;
 import com.ai.workbench.bank.service.TransferService;

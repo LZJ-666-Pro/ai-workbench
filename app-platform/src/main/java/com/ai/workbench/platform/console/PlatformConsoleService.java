@@ -1,4 +1,4 @@
-package com.ai.workbench.bank.console;
+package com.ai.workbench.platform.console;
 
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
@@ -9,18 +9,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import com.ai.workbench.bank.console.ConsoleDtos.AppCard;
-import com.ai.workbench.bank.console.ConsoleDtos.AppHit;
-import com.ai.workbench.bank.console.ConsoleDtos.EndpointHit;
-import com.ai.workbench.bank.console.ConsoleDtos.HeroCaps;
-import com.ai.workbench.bank.console.ConsoleDtos.LogPage;
-import com.ai.workbench.bank.console.ConsoleDtos.LogRow;
-import com.ai.workbench.bank.console.ConsoleDtos.LogSummary;
-import com.ai.workbench.bank.console.ConsoleDtos.Metric;
-import com.ai.workbench.bank.console.ConsoleDtos.Notification;
-import com.ai.workbench.bank.console.ConsoleDtos.PlatformStats;
-import com.ai.workbench.bank.console.ConsoleDtos.SearchResult;
-import com.ai.workbench.bank.console.ConsoleDtos.Workbench;
+import com.ai.workbench.platform.console.ConsoleDtos.AppCard;
+import com.ai.workbench.platform.console.ConsoleDtos.AppHit;
+import com.ai.workbench.platform.console.ConsoleDtos.EndpointHit;
+import com.ai.workbench.platform.console.ConsoleDtos.HeroCaps;
+import com.ai.workbench.platform.console.ConsoleDtos.LogPage;
+import com.ai.workbench.platform.console.ConsoleDtos.LogRow;
+import com.ai.workbench.platform.console.ConsoleDtos.LogSummary;
+import com.ai.workbench.platform.console.ConsoleDtos.Metric;
+import com.ai.workbench.platform.console.ConsoleDtos.Notification;
+import com.ai.workbench.platform.console.ConsoleDtos.PlatformStats;
+import com.ai.workbench.platform.console.ConsoleDtos.SearchResult;
+import com.ai.workbench.platform.console.ConsoleDtos.Workbench;
 import com.ai.workbench.core.agent.AgentRegistry;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
